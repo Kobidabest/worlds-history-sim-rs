@@ -2,42 +2,52 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Civilization History Simulator</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a2e; color: #eee; }
-        #app { display: flex; flex-direction: column; height: 100vh; }
-        header { background: #16213e; padding: 10px 20px; display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
-        h1 { font-size: 1.4em; color: #e94560; }
-        button { background: #e94560; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 14px; }
-        button:hover { background: #ff6b6b; }
-        button:disabled { background: #555; cursor: not-allowed; }
-        select { background: #0f3460; color: white; border: 1px solid #e94560; padding: 8px; border-radius: 4px; }
-        #year-display { color: #e94560; font-size: 1.2em; font-weight: bold; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a2e; color: #eee; overflow: hidden; }
+        #app { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
+        header { background: #16213e; padding: 8px 15px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        h1 { font-size: 1.2em; color: #e94560; }
+        button { background: #e94560; color: white; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 14px; touch-action: manipulation; }
+        button:hover, button:active { background: #ff6b6b; }
+        select { background: #0f3460; color: white; border: 1px solid #e94560; padding: 6px; border-radius: 4px; font-size: 14px; }
+        #year-display { color: #e94560; font-size: 1.1em; font-weight: bold; margin-left: auto; }
         main { display: flex; flex: 1; overflow: hidden; }
-        #map-container { flex: 1; position: relative; overflow: hidden; background: #0a0a1a; }
-        canvas { display: block; }
-        #sidebar { width: 300px; background: #16213e; padding: 15px; overflow-y: auto; }
-        .panel { background: #0f3460; border-radius: 8px; padding: 15px; margin-bottom: 15px; }
-        .panel h2 { color: #e94560; font-size: 1em; margin-bottom: 10px; border-bottom: 1px solid #e94560; padding-bottom: 5px; }
-        .stat-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 0.9em; }
+        #map-container { flex: 1; position: relative; overflow: hidden; background: #0a0a1a; touch-action: none; }
+        canvas { display: block; image-rendering: pixelated; image-rendering: crisp-edges; }
+        #sidebar { width: 280px; background: #16213e; padding: 10px; overflow-y: auto; }
+        .panel { background: #0f3460; border-radius: 8px; padding: 12px; margin-bottom: 10px; }
+        .panel h2 { color: #e94560; font-size: 0.95em; margin-bottom: 8px; border-bottom: 1px solid #e94560; padding-bottom: 4px; }
+        .stat-row { display: flex; justify-content: space-between; padding: 3px 0; font-size: 0.85em; }
         .stat-row span:last-child { color: #e94560; font-weight: bold; }
-        .nation-item { padding: 8px; margin: 5px 0; border-radius: 4px; font-size: 0.85em; }
-        .event-item { padding: 6px; margin: 3px 0; background: #1a1a2e; border-radius: 4px; font-size: 0.8em; border-left: 3px solid #e94560; }
-        #tile-info p { font-size: 0.85em; margin: 3px 0; }
-        #controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+        .nation-item { padding: 6px 8px; margin: 4px 0; border-radius: 4px; font-size: 0.8em; color: #fff; text-shadow: 1px 1px 1px rgba(0,0,0,0.5); }
+        .event-item { padding: 5px 8px; margin: 3px 0; background: #1a1a2e; border-radius: 4px; font-size: 0.75em; border-left: 3px solid #e94560; }
+        #tile-info p { font-size: 0.8em; margin: 2px 0; }
+        #controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+        #error-display { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #e94560; padding: 20px; border-radius: 8px; display: none; z-index: 1000; max-width: 80%; }
+        #loading { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #e94560; font-size: 1.5em; }
+        @media (max-width: 768px) {
+            main { flex-direction: column; }
+            #sidebar { width: 100%; height: 40vh; order: 2; }
+            #map-container { height: 60vh; order: 1; }
+            header { padding: 6px 10px; }
+            h1 { font-size: 1em; }
+            button { padding: 6px 10px; font-size: 12px; }
+            #controls { gap: 5px; }
+        }
     </style>
 </head>
 <body>
     <div id="app">
         <header>
-            <h1>Civilization Simulator</h1>
+            <h1>Civ Simulator</h1>
             <div id="controls">
-                <button id="btn-new">New World</button>
+                <button id="btn-new">New</button>
                 <button id="btn-play">Play</button>
                 <button id="btn-step">Step</button>
-                <button id="btn-fast">+100 Years</button>
+                <button id="btn-fast">+100y</button>
                 <select id="speed-select">
                     <option value="1">1x</option>
                     <option value="5">5x</option>
@@ -68,11 +78,11 @@
                 </div>
                 <div class="panel">
                     <h2>Top Nations</h2>
-                    <div id="nations-list"></div>
+                    <div id="nations-list"><p style="font-size:0.8em;color:#888;">None yet - press Play!</p></div>
                 </div>
                 <div class="panel">
                     <h2>Tile Info</h2>
-                    <div id="tile-info"><p>Hover over map</p></div>
+                    <div id="tile-info"><p>Tap/hover on map</p></div>
                 </div>
                 <div class="panel">
                     <h2>Recent Events</h2>
@@ -81,330 +91,613 @@
             </aside>
         </main>
     </div>
+    <div id="loading">Generating world...</div>
+    <div id="error-display"></div>
+
 <script>
-// Simple Civilization Simulator - Pure JavaScript Version
-const WIDTH = 200, HEIGHT = 100;
-let world = [], nations = [], settlements = [], cultures = [], religions = [], events = [];
-let year = -10000, running = false, speed = 10, viewMode = 'political', nextId = 1;
-let canvas, ctx, scale = 4, offsetX = 0, offsetY = 0, dragging = false, dragStart = {x:0,y:0};
+(function() {
+    'use strict';
 
-const BIOMES = {
-    ocean: {color: '#1c4278', hab: 0},
-    deep: {color: '#0f285a', hab: 0},
-    ice: {color: '#f0f8ff', hab: 0.02},
-    tundra: {color: '#8b8b80', hab: 0.15},
-    taiga: {color: '#2b3f28', hab: 0.35},
-    grass: {color: '#9acd32', hab: 0.9},
-    savanna: {color: '#d2b45a', hab: 0.7},
-    desert: {color: '#fde1ab', hab: 0.1},
-    forest: {color: '#228b22', hab: 0.75},
-    rain: {color: '#006400', hab: 0.5},
-    mountain: {color: '#8b8989', hab: 0.2},
-    hills: {color: '#6b8e23', hab: 0.6},
-    wetland: {color: '#2f4f4f', hab: 0.4}
-};
+    // Configuration
+    var WIDTH = 160;
+    var HEIGHT = 80;
+    var SCALE = 3;
 
-function rand(min, max) { return Math.random() * (max - min) + min; }
-function randInt(min, max) { return Math.floor(rand(min, max)); }
-function pick(arr) { return arr[randInt(0, arr.length)]; }
+    // State
+    var world = [];
+    var nations = [];
+    var settlements = [];
+    var cultures = [];
+    var religions = [];
+    var events = [];
+    var year = -10000;
+    var running = false;
+    var speed = 10;
+    var viewMode = 'political';
+    var nextId = 1;
+    var canvas, ctx;
+    var initialized = false;
 
-function generateName() {
-    const pre = ['Al','Bal','Cor','Dar','El','Far','Gor','Har','Ir','Jar','Kor','Lor','Mar','Nor','Or','Par','Qor','Rar','Sar','Tar','Ul','Var','Wor','Xar','Yor','Zar'];
-    const mid = ['a','e','i','o','u','an','en','in','on','un','ar','er','ir','or','ur'];
-    const suf = ['ia','is','us','um','a','os','es','an','en','on','ar','or','ium','ius','land','stan','via'];
-    return pick(pre) + pick(mid) + pick(suf);
-}
+    // Biome definitions
+    var BIOMES = {
+        ocean: {color: '#1c4278', hab: 0},
+        deep: {color: '#0f285a', hab: 0},
+        ice: {color: '#e8f4f8', hab: 0.05},
+        tundra: {color: '#8b9b8b', hab: 0.2},
+        taiga: {color: '#2b4f38', hab: 0.4},
+        grass: {color: '#7cb342', hab: 1.0},
+        savanna: {color: '#c9a227', hab: 0.7},
+        desert: {color: '#edc9af', hab: 0.15},
+        forest: {color: '#33691e', hab: 0.8},
+        jungle: {color: '#1b5e20', hab: 0.5},
+        mountain: {color: '#757575', hab: 0.25},
+        hills: {color: '#689f38', hab: 0.7}
+    };
 
-function generateWorld() {
-    world = []; nations = []; settlements = []; cultures = []; religions = []; events = [];
-    year = -10000; nextId = 1;
-
-    // Generate terrain
-    const continents = [];
-    for (let i = 0; i < randInt(5, 10); i++) {
-        continents.push({x: rand(0, WIDTH), y: rand(HEIGHT*0.15, HEIGHT*0.85), size: rand(0.08, 0.2)});
+    // Utility functions
+    function rand(min, max) {
+        return Math.random() * (max - min) + min;
     }
 
-    for (let y = 0; y < HEIGHT; y++) {
-        world[y] = [];
-        for (let x = 0; x < WIDTH; x++) {
-            let alt = -1;
-            for (const c of continents) {
-                const dx = Math.min(Math.abs(x - c.x), WIDTH - Math.abs(x - c.x));
-                const dy = Math.abs(y - c.y);
-                const dist = Math.sqrt(dx*dx + dy*dy) / (WIDTH * c.size);
-                const inf = Math.pow(Math.max(0, 1 - dist), 1.5);
-                alt = Math.max(alt, -1 + inf * 2.5);
+    function randInt(min, max) {
+        return Math.floor(Math.random() * (max - min)) + min;
+    }
+
+    function pick(arr) {
+        if (!arr || arr.length === 0) return null;
+        return arr[Math.floor(Math.random() * arr.length)];
+    }
+
+    function generateName() {
+        var pre = ['Al','Bal','Cor','Dar','El','Far','Gor','Har','Ir','Jar','Kor','Lor','Mar','Nor','Or','Par','Rar','Sar','Tar','Ul','Var','Wor','Xar','Yor','Zar','Ae','Be','Ce','De','Fe','Ge','He','Ke','Le','Me','Ne','Pe','Re','Se','Te','Ve','We','Xe','Ye','Ze'];
+        var mid = ['a','e','i','o','u','an','en','in','on','un','ar','er','ir','or','ur','al','el','il','ol','ul'];
+        var suf = ['ia','is','us','um','a','os','es','an','en','on','ar','or','ium','land','stan','via','nia','ria','tia','sia'];
+        return pick(pre) + pick(mid) + pick(suf);
+    }
+
+    function showError(msg) {
+        var el = document.getElementById('error-display');
+        if (el) {
+            el.textContent = 'Error: ' + msg;
+            el.style.display = 'block';
+        }
+        console.error(msg);
+    }
+
+    function hideLoading() {
+        var el = document.getElementById('loading');
+        if (el) el.style.display = 'none';
+    }
+
+    function generateWorld() {
+        try {
+            console.log('Generating world...');
+
+            // Reset state
+            world = [];
+            nations = [];
+            settlements = [];
+            cultures = [];
+            religions = [];
+            events = [];
+            year = -10000;
+            nextId = 1;
+
+            // Generate continents
+            var continents = [];
+            var numContinents = randInt(4, 8);
+            for (var i = 0; i < numContinents; i++) {
+                continents.push({
+                    x: rand(0, WIDTH),
+                    y: rand(HEIGHT * 0.2, HEIGHT * 0.8),
+                    size: rand(0.1, 0.25)
+                });
             }
-            alt += (Math.random() - 0.5) * 0.5;
 
-            const lat = Math.abs(y / HEIGHT - 0.5) * 2;
-            const temp = 30 - lat * 60 - Math.max(0, alt) * 20;
-            const rain = (lat < 0.15 ? 2500 : lat < 0.45 ? 1500 : 500) + Math.random() * 500;
+            // Generate terrain
+            for (var y = 0; y < HEIGHT; y++) {
+                world[y] = [];
+                for (var x = 0; x < WIDTH; x++) {
+                    var alt = -1;
 
-            let biome = 'ocean';
-            if (alt < -0.3) biome = 'deep';
-            else if (alt < 0) biome = 'ocean';
-            else if (temp < -15) biome = 'ice';
-            else if (temp < -5) biome = rain > 500 ? 'taiga' : 'tundra';
-            else if (alt > 1.2) biome = 'mountain';
-            else if (alt > 0.6) biome = 'hills';
-            else if (rain < 300) biome = 'desert';
-            else if (rain < 800) biome = temp > 20 ? 'savanna' : 'grass';
-            else if (rain > 2500 && temp > 20) biome = 'rain';
-            else if (rain > 1500) biome = temp > 15 ? 'forest' : 'taiga';
-            else biome = temp > 18 ? 'savanna' : 'grass';
+                    // Continental influence
+                    for (var c = 0; c < continents.length; c++) {
+                        var cont = continents[c];
+                        var dx = Math.min(Math.abs(x - cont.x), WIDTH - Math.abs(x - cont.x));
+                        var dy = Math.abs(y - cont.y);
+                        var dist = Math.sqrt(dx * dx + dy * dy) / (WIDTH * cont.size);
+                        var influence = Math.pow(Math.max(0, 1 - dist), 1.5);
+                        alt = Math.max(alt, -1 + influence * 2.5);
+                    }
 
-            world[y][x] = {alt, temp, rain, biome, owner: null, settlement: null, pop: 0};
+                    // Add noise
+                    alt += (Math.random() - 0.5) * 0.4;
+
+                    // Calculate climate
+                    var lat = Math.abs(y / HEIGHT - 0.5) * 2;
+                    var temp = 35 - lat * 65 - Math.max(0, alt) * 25;
+                    var rain = 500;
+                    if (lat < 0.2) rain = 2000 + Math.random() * 1000;
+                    else if (lat < 0.5) rain = 800 + Math.random() * 800;
+                    else rain = 300 + Math.random() * 400;
+
+                    // Determine biome
+                    var biome = 'ocean';
+                    if (alt < -0.3) biome = 'deep';
+                    else if (alt < 0.05) biome = 'ocean';
+                    else if (temp < -10) biome = 'ice';
+                    else if (temp < 0) biome = rain > 400 ? 'taiga' : 'tundra';
+                    else if (alt > 1.0) biome = 'mountain';
+                    else if (alt > 0.5) biome = 'hills';
+                    else if (rain < 400) biome = 'desert';
+                    else if (rain < 1000) biome = temp > 20 ? 'savanna' : 'grass';
+                    else if (temp > 25) biome = 'jungle';
+                    else biome = 'forest';
+
+                    world[y][x] = {
+                        alt: alt,
+                        temp: temp,
+                        rain: rain,
+                        biome: biome,
+                        owner: null,
+                        settlement: null,
+                        pop: 0
+                    };
+                }
+            }
+
+            console.log('Terrain generated, spawning civilizations...');
+
+            // Spawn initial cultures and settlements
+            var spawned = 0;
+            for (var attempt = 0; attempt < 200 && spawned < 12; attempt++) {
+                var loc = findGoodLocation();
+                if (loc) {
+                    var culture = {
+                        id: nextId++,
+                        name: generateName(),
+                        color: 'hsl(' + randInt(0, 360) + ',70%,50%)',
+                        pop: 0
+                    };
+                    cultures.push(culture);
+                    createSettlement(loc.x, loc.y, culture, null);
+                    spawned++;
+                }
+            }
+
+            console.log('Spawned ' + spawned + ' initial settlements');
+            addEvent('World created with ' + spawned + ' tribes');
+
+            hideLoading();
+            render();
+            updateUI();
+            initialized = true;
+
+        } catch (e) {
+            showError('World generation failed: ' + e.message);
+            console.error(e);
         }
     }
 
-    // Spawn initial cultures and settlements
-    for (let i = 0; i < 15; i++) {
-        const loc = findGoodLocation();
-        if (loc) {
-            const culture = {id: nextId++, name: generateName(), color: `hsl(${randInt(0,360)},70%,50%)`, pop: 0};
-            cultures.push(culture);
-            createSettlement(loc.x, loc.y, culture);
+    function findGoodLocation() {
+        for (var i = 0; i < 200; i++) {
+            var x = randInt(0, WIDTH);
+            var y = randInt(0, HEIGHT);
+            if (world[y] && world[y][x]) {
+                var tile = world[y][x];
+                var biomeData = BIOMES[tile.biome];
+                if (biomeData && biomeData.hab > 0.5 && !tile.settlement) {
+                    // Check not too close to other settlements
+                    var tooClose = false;
+                    for (var s = 0; s < settlements.length; s++) {
+                        var dx = Math.abs(settlements[s].x - x);
+                        var dy = Math.abs(settlements[s].y - y);
+                        if (dx < 8 && dy < 8) {
+                            tooClose = true;
+                            break;
+                        }
+                    }
+                    if (!tooClose) return {x: x, y: y};
+                }
+            }
         }
+        return null;
     }
 
-    addEvent(`World created`);
-    render();
-    updateUI();
-}
-
-function findGoodLocation() {
-    for (let i = 0; i < 100; i++) {
-        const x = randInt(0, WIDTH), y = randInt(0, HEIGHT);
-        const tile = world[y][x];
-        if (BIOMES[tile.biome].hab > 0.4 && !tile.settlement) return {x, y};
-    }
-    return null;
-}
-
-function createSettlement(x, y, culture, nation = null) {
-    const s = {id: nextId++, name: generateName(), x, y, pop: randInt(50, 200), culture, nation, founded: year};
-    settlements.push(s);
-    world[y][x].settlement = s;
-    if (nation) nation.settlements.push(s);
-    addEvent(`${s.name} founded`);
-    return s;
-}
-
-function createNation(settlement) {
-    const n = {id: nextId++, name: generateName(), color: `hsl(${randInt(0,360)},60%,45%)`,
-               settlements: [settlement], culture: settlement.culture, founded: year, pop: 0, atWar: []};
-    nations.push(n);
-    settlement.nation = n;
-    addEvent(`${n.name} rises as a nation`);
-    return n;
-}
-
-function createReligion(settlement) {
-    const r = {id: nextId++, name: generateName() + (Math.random() > 0.5 ? 'ism' : ' Faith'),
-               origin: settlement, followers: 0, founded: year};
-    religions.push(r);
-    settlement.religion = r;
-    addEvent(`${r.name} founded in ${settlement.name}`);
-    return r;
-}
-
-function addEvent(text) {
-    events.unshift({year, text});
-    if (events.length > 50) events.pop();
-}
-
-function tick() {
-    year++;
-
-    // Settlement growth and updates
-    for (const s of settlements) {
-        const tile = world[s.y][s.x];
-        const hab = BIOMES[tile.biome].hab;
-        const growth = 1 + (hab * 0.01) + (Math.random() * 0.005);
-        s.pop = Math.floor(s.pop * growth);
-        tile.pop = s.pop;
-
-        // Form nation
-        if (!s.nation && s.pop > 500 && Math.random() < 0.02) {
-            createNation(s);
+    function createSettlement(x, y, culture, nation) {
+        var s = {
+            id: nextId++,
+            name: generateName(),
+            x: x,
+            y: y,
+            pop: randInt(80, 250),
+            culture: culture,
+            nation: nation,
+            religion: null,
+            founded: year
+        };
+        settlements.push(s);
+        if (world[y] && world[y][x]) {
+            world[y][x].settlement = s;
         }
-
-        // Found religion
-        if (!s.religion && s.pop > 1000 && Math.random() < 0.005) {
-            createReligion(s);
+        if (nation) {
+            nation.settlements.push(s);
         }
-
-        // Spread religion
-        if (s.religion && Math.random() < 0.01) {
-            const nearby = settlements.filter(o => !o.religion && Math.abs(o.x-s.x) + Math.abs(o.y-s.y) < 30);
-            if (nearby.length) { pick(nearby).religion = s.religion; }
-        }
+        addEvent(s.name + ' founded');
+        return s;
     }
 
-    // Nation expansion
-    for (const n of nations) {
-        n.pop = n.settlements.reduce((sum, s) => sum + s.pop, 0);
+    function createNation(settlement) {
+        var n = {
+            id: nextId++,
+            name: generateName(),
+            color: 'hsl(' + randInt(0, 360) + ',55%,40%)',
+            settlements: [settlement],
+            culture: settlement.culture,
+            founded: year,
+            pop: 0,
+            atWar: []
+        };
+        nations.push(n);
+        settlement.nation = n;
+        addEvent(n.name + ' rises as a nation');
+        return n;
+    }
 
-        // Claim tiles
-        for (const s of n.settlements) {
-            for (let dy = -3; dy <= 3; dy++) {
-                for (let dx = -3; dx <= 3; dx++) {
-                    const nx = (s.x + dx + WIDTH) % WIDTH;
-                    const ny = Math.max(0, Math.min(HEIGHT-1, s.y + dy));
-                    const tile = world[ny][nx];
-                    if (tile.alt > 0 && !tile.owner && Math.random() < 0.1) {
-                        tile.owner = n;
+    function createReligion(settlement) {
+        var suffix = Math.random() > 0.5 ? 'ism' : ' Faith';
+        var r = {
+            id: nextId++,
+            name: generateName() + suffix,
+            origin: settlement,
+            followers: 0,
+            founded: year
+        };
+        religions.push(r);
+        settlement.religion = r;
+        addEvent(r.name + ' founded');
+        return r;
+    }
+
+    function addEvent(text) {
+        events.unshift({year: year, text: text});
+        if (events.length > 50) events.pop();
+    }
+
+    function tick() {
+        year++;
+
+        // Settlement growth
+        for (var i = 0; i < settlements.length; i++) {
+            var s = settlements[i];
+            if (!world[s.y] || !world[s.y][s.x]) continue;
+
+            var tile = world[s.y][s.x];
+            var biomeData = BIOMES[tile.biome];
+            var hab = biomeData ? biomeData.hab : 0.5;
+            var growth = 1 + (hab * 0.008) + (Math.random() * 0.004);
+            s.pop = Math.floor(s.pop * growth);
+            tile.pop = s.pop;
+
+            // Form nation
+            if (!s.nation && s.pop > 800 && Math.random() < 0.03) {
+                createNation(s);
+            }
+
+            // Found religion
+            if (!s.religion && s.pop > 1500 && Math.random() < 0.008) {
+                createReligion(s);
+            }
+
+            // Spread religion
+            if (s.religion && Math.random() < 0.02) {
+                for (var j = 0; j < settlements.length; j++) {
+                    var other = settlements[j];
+                    if (!other.religion) {
+                        var dist = Math.abs(other.x - s.x) + Math.abs(other.y - s.y);
+                        if (dist < 25 && Math.random() < 0.1) {
+                            other.religion = s.religion;
+                            break;
+                        }
                     }
                 }
             }
         }
 
-        // Found new settlements
-        if (n.pop > n.settlements.length * 2000 && Math.random() < 0.05) {
-            const loc = findGoodLocation();
-            if (loc) createSettlement(loc.x, loc.y, n.culture, n);
-        }
+        // Nation expansion
+        for (var ni = 0; ni < nations.length; ni++) {
+            var n = nations[ni];
+            n.pop = 0;
+            for (var si = 0; si < n.settlements.length; si++) {
+                n.pop += n.settlements[si].pop;
+            }
 
-        // War
-        if (n.atWar.length === 0 && Math.random() < 0.001) {
-            const enemies = nations.filter(o => o !== n && o.settlements.length > 0);
-            if (enemies.length) {
-                const enemy = pick(enemies);
-                n.atWar.push(enemy);
-                enemy.atWar.push(n);
-                addEvent(`${n.name} declares war on ${enemy.name}`);
+            // Claim tiles
+            for (var si2 = 0; si2 < n.settlements.length; si2++) {
+                var ns = n.settlements[si2];
+                for (var dy = -4; dy <= 4; dy++) {
+                    for (var dx = -4; dx <= 4; dx++) {
+                        var nx = (ns.x + dx + WIDTH) % WIDTH;
+                        var ny = Math.max(0, Math.min(HEIGHT - 1, ns.y + dy));
+                        if (world[ny] && world[ny][nx]) {
+                            var ntile = world[ny][nx];
+                            if (ntile.alt > 0 && !ntile.owner && Math.random() < 0.08) {
+                                ntile.owner = n;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Found new settlements
+            if (n.pop > n.settlements.length * 3000 && Math.random() < 0.04) {
+                var loc = findGoodLocation();
+                if (loc) {
+                    createSettlement(loc.x, loc.y, n.culture, n);
+                }
+            }
+
+            // Wars
+            if (n.atWar.length === 0 && nations.length > 1 && Math.random() < 0.002) {
+                var enemies = [];
+                for (var ei = 0; ei < nations.length; ei++) {
+                    if (nations[ei] !== n && nations[ei].settlements.length > 0) {
+                        enemies.push(nations[ei]);
+                    }
+                }
+                if (enemies.length > 0) {
+                    var enemy = pick(enemies);
+                    n.atWar.push(enemy);
+                    enemy.atWar.push(n);
+                    addEvent(n.name + ' declares war on ' + enemy.name);
+                }
+            }
+
+            // End wars
+            for (var wi = n.atWar.length - 1; wi >= 0; wi--) {
+                if (Math.random() < 0.015) {
+                    var warEnemy = n.atWar[wi];
+                    n.atWar.splice(wi, 1);
+                    for (var ri = warEnemy.atWar.length - 1; ri >= 0; ri--) {
+                        if (warEnemy.atWar[ri] === n) {
+                            warEnemy.atWar.splice(ri, 1);
+                        }
+                    }
+                    addEvent('Peace: ' + n.name + ' & ' + warEnemy.name);
+                }
             }
         }
 
-        // End war
-        for (let i = n.atWar.length - 1; i >= 0; i--) {
-            if (Math.random() < 0.02) {
-                const enemy = n.atWar[i];
-                n.atWar.splice(i, 1);
-                enemy.atWar = enemy.atWar.filter(e => e !== n);
-                addEvent(`Peace between ${n.name} and ${enemy.name}`);
+        // Update culture populations
+        for (var ci = 0; ci < cultures.length; ci++) {
+            var cult = cultures[ci];
+            cult.pop = 0;
+            for (var csi = 0; csi < settlements.length; csi++) {
+                if (settlements[csi].culture === cult) {
+                    cult.pop += settlements[csi].pop;
+                }
+            }
+        }
+
+        // Update religion followers
+        for (var reli = 0; reli < religions.length; reli++) {
+            var rel = religions[reli];
+            rel.followers = 0;
+            for (var rsi = 0; rsi < settlements.length; rsi++) {
+                if (settlements[rsi].religion === rel) {
+                    rel.followers += settlements[rsi].pop;
+                }
             }
         }
     }
 
-    // Culture population
-    for (const c of cultures) {
-        c.pop = settlements.filter(s => s.culture === c).reduce((sum, s) => sum + s.pop, 0);
-    }
+    function render() {
+        if (!canvas || !ctx || world.length === 0) return;
 
-    // Religion followers
-    for (const r of religions) {
-        r.followers = settlements.filter(s => s.religion === r).reduce((sum, s) => sum + s.pop, 0);
-    }
-}
+        try {
+            canvas.width = WIDTH * SCALE;
+            canvas.height = HEIGHT * SCALE;
 
-function render() {
-    canvas.width = WIDTH * scale;
-    canvas.height = HEIGHT * scale;
+            for (var y = 0; y < HEIGHT; y++) {
+                if (!world[y]) continue;
+                for (var x = 0; x < WIDTH; x++) {
+                    if (!world[y][x]) continue;
+                    var tile = world[y][x];
+                    var color;
 
-    for (let y = 0; y < HEIGHT; y++) {
-        for (let x = 0; x < WIDTH; x++) {
-            const tile = world[y][x];
-            let color;
+                    if (viewMode === 'political' && tile.owner) {
+                        color = tile.owner.color;
+                    } else if (viewMode === 'terrain') {
+                        var v = Math.floor((tile.alt + 1) * 100);
+                        v = Math.max(0, Math.min(255, v));
+                        color = 'rgb(' + v + ',' + v + ',' + v + ')';
+                    } else {
+                        var biomeData = BIOMES[tile.biome];
+                        color = biomeData ? biomeData.color : '#333';
+                    }
 
-            if (viewMode === 'political' && tile.owner) {
-                color = tile.owner.color;
-            } else if (viewMode === 'terrain') {
-                const v = Math.floor((tile.alt + 1) * 127);
-                color = `rgb(${v},${v},${v})`;
-            } else {
-                color = BIOMES[tile.biome].color;
+                    ctx.fillStyle = color;
+                    ctx.fillRect(x * SCALE, y * SCALE, SCALE, SCALE);
+
+                    // Draw settlements
+                    if (tile.settlement) {
+                        ctx.fillStyle = tile.settlement.nation ? '#ffffff' : '#ffff00';
+                        var radius = Math.max(1, Math.min(SCALE * 0.6, Math.log10(tile.settlement.pop + 1) * 0.8));
+                        ctx.beginPath();
+                        ctx.arc(x * SCALE + SCALE / 2, y * SCALE + SCALE / 2, radius, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
             }
-
-            ctx.fillStyle = color;
-            ctx.fillRect(x * scale, y * scale, scale, scale);
-
-            if (tile.settlement && scale >= 3) {
-                ctx.fillStyle = tile.settlement.nation ? '#fff' : '#ff0';
-                const r = Math.min(scale/2, Math.max(1, Math.log10(tile.settlement.pop)));
-                ctx.beginPath();
-                ctx.arc(x * scale + scale/2, y * scale + scale/2, r, 0, Math.PI * 2);
-                ctx.fill();
-            }
+        } catch (e) {
+            console.error('Render error:', e);
         }
     }
-}
 
-function updateUI() {
-    document.getElementById('year-display').textContent = `Year: ${year}`;
-    document.getElementById('stat-pop').textContent = settlements.reduce((s,t) => s + t.pop, 0).toLocaleString();
-    document.getElementById('stat-nations').textContent = nations.length;
-    document.getElementById('stat-settlements').textContent = settlements.length;
-    document.getElementById('stat-cultures').textContent = cultures.length;
-    document.getElementById('stat-religions').textContent = religions.length;
-    document.getElementById('stat-wars').textContent = nations.reduce((s,n) => s + n.atWar.length, 0) / 2;
+    function updateUI() {
+        try {
+            document.getElementById('year-display').textContent = 'Year: ' + year;
 
-    const topNations = [...nations].sort((a,b) => b.pop - a.pop).slice(0, 5);
-    document.getElementById('nations-list').innerHTML = topNations.map(n =>
-        `<div class="nation-item" style="background:${n.color}">${n.name}: ${n.pop.toLocaleString()}</div>`
-    ).join('');
-
-    document.getElementById('history-list').innerHTML = events.slice(0, 10).map(e =>
-        `<div class="event-item"><b>${e.year}:</b> ${e.text}</div>`
-    ).join('');
-}
-
-function gameLoop() {
-    if (running) {
-        for (let i = 0; i < speed; i++) tick();
-        render();
-        updateUI();
-    }
-    requestAnimationFrame(gameLoop);
-}
-
-function init() {
-    canvas = document.getElementById('map-canvas');
-    ctx = canvas.getContext('2d');
-
-    document.getElementById('btn-new').onclick = generateWorld;
-    document.getElementById('btn-play').onclick = () => {
-        running = !running;
-        document.getElementById('btn-play').textContent = running ? 'Pause' : 'Play';
-    };
-    document.getElementById('btn-step').onclick = () => { tick(); render(); updateUI(); };
-    document.getElementById('btn-fast').onclick = () => { for(let i=0;i<100;i++) tick(); render(); updateUI(); };
-    document.getElementById('speed-select').onchange = e => speed = parseInt(e.target.value);
-    document.getElementById('view-select').onchange = e => { viewMode = e.target.value; render(); };
-
-    canvas.onmousemove = e => {
-        const rect = canvas.getBoundingClientRect();
-        const x = Math.floor((e.clientX - rect.left) / scale);
-        const y = Math.floor((e.clientY - rect.top) / scale);
-        if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT) {
-            const tile = world[y][x];
-            let info = `<p><b>Position:</b> ${x}, ${y}</p>`;
-            info += `<p><b>Biome:</b> ${tile.biome}</p>`;
-            if (tile.settlement) {
-                const s = tile.settlement;
-                info += `<p><b>Settlement:</b> ${s.name}</p>`;
-                info += `<p><b>Population:</b> ${s.pop.toLocaleString()}</p>`;
-                if (s.nation) info += `<p><b>Nation:</b> ${s.nation.name}</p>`;
-                if (s.religion) info += `<p><b>Religion:</b> ${s.religion.name}</p>`;
+            var totalPop = 0;
+            for (var i = 0; i < settlements.length; i++) {
+                totalPop += settlements[i].pop;
             }
-            if (tile.owner) info += `<p><b>Owner:</b> ${tile.owner.name}</p>`;
-            document.getElementById('tile-info').innerHTML = info;
+            document.getElementById('stat-pop').textContent = totalPop.toLocaleString();
+            document.getElementById('stat-nations').textContent = nations.length;
+            document.getElementById('stat-settlements').textContent = settlements.length;
+            document.getElementById('stat-cultures').textContent = cultures.length;
+            document.getElementById('stat-religions').textContent = religions.length;
+
+            var totalWars = 0;
+            for (var wi = 0; wi < nations.length; wi++) {
+                totalWars += nations[wi].atWar.length;
+            }
+            document.getElementById('stat-wars').textContent = Math.floor(totalWars / 2);
+
+            // Top nations
+            var sortedNations = nations.slice().sort(function(a, b) { return b.pop - a.pop; });
+            var topNations = sortedNations.slice(0, 5);
+            var nationsHtml = '';
+            for (var ni = 0; ni < topNations.length; ni++) {
+                var nat = topNations[ni];
+                nationsHtml += '<div class="nation-item" style="background:' + nat.color + '">' + nat.name + ': ' + nat.pop.toLocaleString() + '</div>';
+            }
+            if (nationsHtml === '') nationsHtml = '<p style="font-size:0.8em;color:#888;">None yet</p>';
+            document.getElementById('nations-list').innerHTML = nationsHtml;
+
+            // Events
+            var eventsHtml = '';
+            var maxEvents = Math.min(8, events.length);
+            for (var ei = 0; ei < maxEvents; ei++) {
+                var ev = events[ei];
+                eventsHtml += '<div class="event-item"><b>' + ev.year + ':</b> ' + ev.text + '</div>';
+            }
+            document.getElementById('history-list').innerHTML = eventsHtml;
+        } catch (e) {
+            console.error('UI update error:', e);
         }
-    };
+    }
 
-    canvas.onwheel = e => {
-        e.preventDefault();
-        scale = Math.max(1, Math.min(10, scale + (e.deltaY > 0 ? -1 : 1)));
-        render();
-    };
+    function gameLoop() {
+        if (running && initialized) {
+            for (var i = 0; i < speed; i++) {
+                tick();
+            }
+            render();
+            updateUI();
+        }
+        requestAnimationFrame(gameLoop);
+    }
 
-    generateWorld();
-    gameLoop();
-}
+    function handleTileInfo(x, y) {
+        if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT) return;
+        if (!world[y] || !world[y][x]) return;
 
-window.onload = init;
+        var tile = world[y][x];
+        var info = '<p><b>Position:</b> ' + x + ', ' + y + '</p>';
+        info += '<p><b>Biome:</b> ' + tile.biome + '</p>';
+
+        if (tile.settlement) {
+            var s = tile.settlement;
+            info += '<p><b>Settlement:</b> ' + s.name + '</p>';
+            info += '<p><b>Population:</b> ' + s.pop.toLocaleString() + '</p>';
+            if (s.nation) info += '<p><b>Nation:</b> ' + s.nation.name + '</p>';
+            if (s.religion) info += '<p><b>Religion:</b> ' + s.religion.name + '</p>';
+        }
+        if (tile.owner) {
+            info += '<p><b>Territory:</b> ' + tile.owner.name + '</p>';
+        }
+        document.getElementById('tile-info').innerHTML = info;
+    }
+
+    function init() {
+        try {
+            console.log('Initializing...');
+
+            canvas = document.getElementById('map-canvas');
+            if (!canvas) {
+                showError('Canvas not found');
+                return;
+            }
+
+            ctx = canvas.getContext('2d');
+            if (!ctx) {
+                showError('Could not get canvas context');
+                return;
+            }
+
+            // Button handlers
+            document.getElementById('btn-new').onclick = function() {
+                document.getElementById('loading').style.display = 'block';
+                setTimeout(generateWorld, 50);
+            };
+
+            document.getElementById('btn-play').onclick = function() {
+                running = !running;
+                this.textContent = running ? 'Pause' : 'Play';
+            };
+
+            document.getElementById('btn-step').onclick = function() {
+                if (initialized) {
+                    tick();
+                    render();
+                    updateUI();
+                }
+            };
+
+            document.getElementById('btn-fast').onclick = function() {
+                if (initialized) {
+                    for (var i = 0; i < 100; i++) tick();
+                    render();
+                    updateUI();
+                }
+            };
+
+            document.getElementById('speed-select').onchange = function(e) {
+                speed = parseInt(e.target.value) || 10;
+            };
+
+            document.getElementById('view-select').onchange = function(e) {
+                viewMode = e.target.value;
+                if (initialized) render();
+            };
+
+            // Mouse/touch handlers
+            canvas.onmousemove = function(e) {
+                var rect = canvas.getBoundingClientRect();
+                var x = Math.floor((e.clientX - rect.left) / SCALE);
+                var y = Math.floor((e.clientY - rect.top) / SCALE);
+                handleTileInfo(x, y);
+            };
+
+            canvas.ontouchmove = function(e) {
+                e.preventDefault();
+                var touch = e.touches[0];
+                var rect = canvas.getBoundingClientRect();
+                var x = Math.floor((touch.clientX - rect.left) / SCALE);
+                var y = Math.floor((touch.clientY - rect.top) / SCALE);
+                handleTileInfo(x, y);
+            };
+
+            // Generate initial world
+            setTimeout(generateWorld, 100);
+
+            // Start game loop
+            gameLoop();
+
+        } catch (e) {
+            showError('Initialization failed: ' + e.message);
+            console.error(e);
+        }
+    }
+
+    // Start when DOM is ready
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+})();
 </script>
 </body>
 </html>
