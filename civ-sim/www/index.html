@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Civilization History Simulator</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="app">
+        <header id="header">
+            <h1>Civilization History Simulator</h1>
+            <div id="controls">
+                <button id="btn-new" title="Generate New World">New World</button>
+                <button id="btn-play" title="Start/Pause Simulation">Play</button>
+                <button id="btn-step" title="Advance One Year">Step</button>
+                <button id="btn-fast" title="Fast Forward 100 Years">Fast (100y)</button>
+                <select id="speed-select">
+                    <option value="1">Speed: 1x</option>
+                    <option value="5">Speed: 5x</option>
+                    <option value="10" selected>Speed: 10x</option>
+                    <option value="50">Speed: 50x</option>
+                    <option value="100">Speed: 100x</option>
+                </select>
+                <select id="view-select">
+                    <option value="biomes">View: Biomes</option>
+                    <option value="political" selected>View: Political</option>
+                    <option value="terrain">View: Terrain</option>
+                    <option value="temperature">View: Temperature</option>
+                    <option value="rainfall">View: Rainfall</option>
+                    <option value="population">View: Population</option>
+                </select>
+            </div>
+            <div id="year-display">Year: <span id="current-year">-10000</span></div>
+        </header>
+
+        <main id="main">
+            <div id="map-container">
+                <canvas id="map-canvas"></canvas>
+                <div id="minimap-container">
+                    <canvas id="minimap-canvas"></canvas>
+                </div>
+            </div>
+
+            <aside id="sidebar">
+                <div id="stats-panel" class="panel">
+                    <h2>World Statistics</h2>
+                    <div class="stat-row">
+                        <span>Population:</span>
+                        <span id="stat-population">0</span>
+                    </div>
+                    <div class="stat-row">
+                        <span>Nations:</span>
+                        <span id="stat-nations">0</span>
+                    </div>
+                    <div class="stat-row">
+                        <span>Settlements:</span>
+                        <span id="stat-settlements">0</span>
+                    </div>
+                    <div class="stat-row">
+                        <span>Cultures:</span>
+                        <span id="stat-cultures">0</span>
+                    </div>
+                    <div class="stat-row">
+                        <span>Religions:</span>
+                        <span id="stat-religions">0</span>
+                    </div>
+                    <div class="stat-row">
+                        <span>Wars Fought:</span>
+                        <span id="stat-wars">0</span>
+                    </div>
+                </div>
+
+                <div id="nations-panel" class="panel">
+                    <h2>Top Nations</h2>
+                    <div id="nations-list"></div>
+                </div>
+
+                <div id="tile-info-panel" class="panel">
+                    <h2>Tile Information</h2>
+                    <div id="tile-info">
+                        <p>Hover over the map to see details</p>
+                    </div>
+                </div>
+
+                <div id="history-panel" class="panel">
+                    <h2>Recent Events</h2>
+                    <div id="history-list"></div>
+                </div>
+            </aside>
+        </main>
+
+        <footer id="footer">
+            <div id="progress-container" style="display: none;">
+                <div id="progress-bar"></div>
+                <span id="progress-text">Generating world...</span>
+            </div>
+        </footer>
+    </div>
+
+    <div id="modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <span class="close-btn">&times;</span>
+            <div id="modal-body"></div>
+        </div>
+    </div>
+
+    <script type="module" src="index.js"></script>
+</body>
+</html>
