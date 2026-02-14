@@ -1,0 +1,388 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: #1a1a2e;
+    color: #e0e0e0;
+    overflow: hidden;
+    height: 100vh;
+}
+
+#app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+}
+
+/* ===== Toolbar ===== */
+header#toolbar {
+    background: #16213e;
+    border-bottom: 1px solid #0f3460;
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+}
+
+header#toolbar h1 {
+    font-size: 16px;
+    color: #53d8fb;
+    white-space: nowrap;
+    letter-spacing: 1px;
+}
+
+.controls {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.control-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(255, 255, 255, 0.05);
+    padding: 4px 10px;
+    border-radius: 6px;
+}
+
+.control-group label {
+    font-size: 12px;
+    color: #aaa;
+}
+
+.control-group span {
+    font-size: 12px;
+    color: #53d8fb;
+    font-weight: 600;
+    min-width: 50px;
+}
+
+input[type="number"] {
+    width: 70px;
+    padding: 3px 6px;
+    background: #0f3460;
+    border: 1px solid #1a4a8a;
+    color: #fff;
+    border-radius: 4px;
+    font-size: 12px;
+}
+
+input[type="range"] {
+    width: 80px;
+    accent-color: #53d8fb;
+}
+
+select {
+    padding: 3px 6px;
+    background: #0f3460;
+    border: 1px solid #1a4a8a;
+    color: #fff;
+    border-radius: 4px;
+    font-size: 12px;
+}
+
+button {
+    padding: 4px 12px;
+    background: #0f3460;
+    border: 1px solid #1a4a8a;
+    color: #53d8fb;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: background 0.2s;
+}
+
+button:hover {
+    background: #1a4a8a;
+}
+
+button:active {
+    background: #53d8fb;
+    color: #16213e;
+}
+
+input[type="checkbox"] {
+    accent-color: #53d8fb;
+}
+
+/* ===== Main Content ===== */
+#main-content {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+
+#canvas-container {
+    flex: 1;
+    position: relative;
+    overflow: auto;
+    background: #111;
+}
+
+#world-canvas {
+    display: block;
+    cursor: crosshair;
+    image-rendering: pixelated;
+}
+
+/* ===== Loading Overlay ===== */
+#loading-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(26, 26, 46, 0.9);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+}
+
+#loading-overlay.hidden {
+    display: none;
+}
+
+.spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid #0f3460;
+    border-top-color: #53d8fb;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-bottom: 12px;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+#loading-overlay p {
+    color: #53d8fb;
+    font-size: 14px;
+}
+
+/* ===== Sidebar ===== */
+aside#sidebar {
+    width: 380px;
+    background: #16213e;
+    border-left: 1px solid #0f3460;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    overflow: hidden;
+}
+
+#tab-buttons {
+    display: flex;
+    border-bottom: 1px solid #0f3460;
+}
+
+.tab-btn {
+    flex: 1;
+    padding: 8px;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    color: #aaa;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.tab-btn.active {
+    background: #0f3460;
+    color: #53d8fb;
+    font-weight: 600;
+}
+
+.tab-btn:hover:not(.active) {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.tab-content {
+    display: none;
+    padding: 12px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.tab-content.active {
+    display: block;
+}
+
+.tab-content h3 {
+    font-size: 14px;
+    color: #53d8fb;
+    margin-bottom: 10px;
+    border-bottom: 1px solid #0f3460;
+    padding-bottom: 6px;
+}
+
+.hint {
+    color: #777;
+    font-size: 12px;
+    font-style: italic;
+}
+
+/* ===== Species List ===== */
+.species-entry {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    margin-bottom: 4px;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: default;
+    transition: background 0.15s;
+}
+
+.species-entry:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.species-color {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.species-name {
+    font-weight: 600;
+    min-width: 80px;
+}
+
+.species-diet {
+    font-size: 10px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    color: #fff;
+    min-width: 55px;
+    text-align: center;
+}
+
+.species-diet.herbivore { background: #2d6a2e; }
+.species-diet.omnivore  { background: #8a6d2b; }
+.species-diet.carnivore { background: #8a2b2b; }
+
+.species-pop {
+    margin-left: auto;
+    color: #aaa;
+    font-size: 11px;
+}
+
+/* ===== Tile Info ===== */
+.tile-detail {
+    margin-bottom: 12px;
+}
+
+.tile-detail h4 {
+    font-size: 13px;
+    color: #53d8fb;
+    margin-bottom: 4px;
+}
+
+.tile-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 2px 0;
+    font-size: 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.tile-row .label {
+    color: #888;
+}
+
+.tile-row .value {
+    color: #ddd;
+    font-weight: 500;
+}
+
+.creature-card {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 4px;
+    padding: 8px;
+    margin-bottom: 6px;
+    font-size: 11px;
+}
+
+.creature-card .creature-header {
+    display: flex;
+    justify-content: space-between;
+    font-weight: 600;
+    margin-bottom: 4px;
+    color: #53d8fb;
+}
+
+.creature-card .creature-stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px;
+}
+
+.creature-card .stat {
+    display: flex;
+    justify-content: space-between;
+}
+
+.creature-card .stat .label {
+    color: #888;
+}
+
+/* ===== Graph ===== */
+#graph-canvas {
+    width: 100%;
+    height: 250px;
+    background: #111;
+    border-radius: 4px;
+    margin-bottom: 8px;
+}
+
+#graph-legend {
+    display: flex;
+    gap: 12px;
+    font-size: 11px;
+    flex-wrap: wrap;
+}
+
+.legend-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.legend-color {
+    width: 12px;
+    height: 3px;
+    border-radius: 1px;
+}
+
+/* ===== Responsive ===== */
+@media (max-width: 900px) {
+    aside#sidebar {
+        width: 300px;
+    }
+}
+
+@media (max-width: 700px) {
+    #main-content {
+        flex-direction: column;
+    }
+    aside#sidebar {
+        width: 100%;
+        height: 40vh;
+    }
+}
