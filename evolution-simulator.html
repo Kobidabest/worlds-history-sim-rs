@@ -1,0 +1,1405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Evolution Ecosystem Simulator</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{width:100%;height:100%;overflow:hidden;background:#1a1a2e;color:#e0e0e0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;font-size:14px;touch-action:none}
+#app{display:flex;flex-direction:column;height:100%}
+#toolbar{display:flex;align-items:center;gap:8px;padding:6px 10px;background:#16213e;border-bottom:1px solid #0f3460;flex-shrink:0;flex-wrap:wrap;z-index:10}
+#toolbar button{padding:6px 14px;border:1px solid #0f3460;background:#1a1a2e;color:#e0e0e0;border-radius:6px;font-size:13px;cursor:pointer;white-space:nowrap}
+#toolbar button:active,#toolbar button.active{background:#0f3460;border-color:#e94560}
+#toolbar select{padding:5px 8px;border:1px solid #0f3460;background:#1a1a2e;color:#e0e0e0;border-radius:6px;font-size:13px}
+#toolbar .sep{width:1px;height:24px;background:#0f3460;flex-shrink:0}
+#toolbar label{font-size:12px;color:#a0a0c0}
+#toolbar span.stat{font-size:12px;color:#e94560;font-weight:600}
+#main-area{flex:1;display:flex;position:relative;overflow:hidden}
+#canvas-wrap{flex:1;position:relative;overflow:hidden}
+canvas{display:block;image-rendering:pixelated}
+#sidebar{width:320px;background:#16213e;border-left:1px solid #0f3460;display:flex;flex-direction:column;overflow:hidden;transition:width .2s}
+#sidebar.collapsed{width:0;border-left:none}
+#sidebar-toggle{position:absolute;right:320px;top:50%;transform:translateY(-50%);z-index:5;background:#16213e;border:1px solid #0f3460;color:#e0e0e0;padding:8px 4px;border-radius:6px 0 0 6px;cursor:pointer;font-size:16px;transition:right .2s}
+#sidebar-toggle.collapsed{right:0}
+#tab-bar{display:flex;border-bottom:1px solid #0f3460;flex-shrink:0}
+#tab-bar button{flex:1;padding:8px;border:none;background:transparent;color:#a0a0c0;font-size:12px;cursor:pointer;border-bottom:2px solid transparent}
+#tab-bar button.active{color:#e94560;border-bottom-color:#e94560}
+.tab-content{flex:1;overflow-y:auto;padding:10px;display:none}
+.tab-content.active{display:block}
+.species-card{background:#1a1a2e;border:1px solid #0f3460;border-radius:8px;padding:10px;margin-bottom:8px}
+.species-card .name{font-weight:600;font-size:13px;margin-bottom:4px}
+.species-card .stats{font-size:11px;color:#a0a0c0;line-height:1.6}
+.species-card .bar{height:4px;background:#0f3460;border-radius:2px;margin:2px 0}
+.species-card .bar-fill{height:100%;border-radius:2px}
+.gene-row{display:flex;justify-content:space-between;align-items:center;font-size:11px;margin:2px 0}
+.gene-row .gene-bar{flex:1;height:4px;background:#0f3460;border-radius:2px;margin:0 6px}
+.gene-row .gene-fill{height:100%;border-radius:2px;background:#e94560}
+#tile-info{font-size:12px;line-height:1.8}
+#tile-info .label{color:#a0a0c0}
+#tile-info .value{color:#e0e0e0;font-weight:600}
+#pop-graph{width:100%;height:200px;background:#1a1a2e;border:1px solid #0f3460;border-radius:6px}
+#minimap{width:100%;height:60px;border:1px solid #0f3460;border-radius:6px;margin-bottom:8px;cursor:pointer}
+.legend-item{display:inline-flex;align-items:center;gap:4px;margin:2px 6px 2px 0;font-size:11px}
+.legend-dot{width:10px;height:10px;border-radius:50%;display:inline-block}
+#speed-slider{width:80px;accent-color:#e94560}
+#loading{position:fixed;inset:0;background:#1a1a2e;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:100}
+#loading h1{color:#e94560;font-size:24px;margin-bottom:10px}
+#loading .bar-outer{width:260px;height:8px;background:#0f3460;border-radius:4px;overflow:hidden}
+#loading .bar-inner{height:100%;background:#e94560;border-radius:4px;transition:width .3s}
+#loading p{margin-top:8px;color:#a0a0c0;font-size:13px}
+@media(max-width:768px){
+  #sidebar{width:280px}
+  #sidebar-toggle{right:280px}
+  #sidebar-toggle.collapsed{right:0}
+}
+@media(max-width:600px){
+  #sidebar{position:absolute;right:0;top:0;bottom:0;z-index:20;width:300px}
+  #sidebar.collapsed{width:0}
+  #sidebar-toggle{right:300px;z-index:21}
+  #sidebar-toggle.collapsed{right:0}
+}
+</style>
+</head>
+<body>
+<div id="loading">
+  <h1>Evolution Simulator</h1>
+  <div class="bar-outer"><div class="bar-inner" id="load-bar" style="width:0%"></div></div>
+  <p id="load-text">Initializing...</p>
+</div>
+<div id="app" style="display:none">
+  <div id="toolbar">
+    <button id="btn-pause">Pause</button>
+    <div class="sep"></div>
+    <label>Speed</label>
+    <input type="range" id="speed-slider" min="1" max="20" value="3">
+    <div class="sep"></div>
+    <label>View</label>
+    <select id="view-select">
+      <option value="biome">Biomes</option>
+      <option value="altitude">Altitude</option>
+      <option value="temperature">Temperature</option>
+      <option value="rainfall">Rainfall</option>
+    </select>
+    <div class="sep"></div>
+    <button id="btn-creatures" class="active">Show Creatures</button>
+    <div class="sep"></div>
+    <span class="stat">Tick: <span id="stat-tick">0</span></span>
+    <span class="stat">Pop: <span id="stat-pop">0</span></span>
+    <span class="stat">Species: <span id="stat-species">0</span></span>
+    <div class="sep"></div>
+    <button id="btn-new">New World</button>
+  </div>
+  <div id="main-area">
+    <div id="canvas-wrap">
+      <canvas id="world-canvas"></canvas>
+    </div>
+    <button id="sidebar-toggle">&lsaquo;</button>
+    <div id="sidebar">
+      <div id="tab-bar">
+        <button class="active" data-tab="species-tab">Species</button>
+        <button data-tab="tile-tab">Tile Info</button>
+        <button data-tab="graph-tab">Graphs</button>
+      </div>
+      <div id="species-tab" class="tab-content active"></div>
+      <div id="tile-tab" class="tab-content">
+        <div id="tile-info"><p style="color:#a0a0c0">Tap a tile on the map to see details.</p></div>
+      </div>
+      <div id="graph-tab" class="tab-content">
+        <canvas id="pop-graph"></canvas>
+        <div id="graph-legend" style="margin-top:6px"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+// ============================================================
+// CONFIGURATION
+// ============================================================
+const CFG = {
+  W: 160, H: 80,
+  NUM_CONTINENTS: 12,
+  CONT_MIN_SIZE: 5.7, CONT_MAX_SIZE: 8.7,
+  TEMP_ALT_FACTOR: 2.05,
+  RAIN_DRY_FACTOR: 0.005,
+  INIT_HERB_SPECIES: 5,
+  INIT_CARN_SPECIES: 2,
+  CREATURES_PER_SPECIES: 40,
+  MAX_CREATURES: 6000,
+  SPECIATION_THRESHOLD: 0.32,
+  SPECIATION_INTERVAL: 50,
+  SNAPSHOT_INTERVAL: 10,
+  MAX_SNAPSHOTS: 500,
+  NUM_GENES: 14,
+  MUTATION_RATE: 0.08,
+  MUTATION_AMOUNT: 0.15,
+  BLEND_CHANCE: 0.3,
+  TILE_SIZE: 4
+};
+
+// Gene indices
+const G = {
+  BODY_SIZE:0, SPEED:1, SENSE_RANGE:2, DIET:3,
+  COLD_TOL:4, HEAT_TOL:5, CAMOUFLAGE:6, AGGRESSION:7,
+  LONGEVITY:8, FERTILITY:9, OFFSPRING:10, EFFICIENCY:11,
+  WATER_NEED:12, LEG_STRENGTH:13
+};
+
+const GENE_NAMES = [
+  "Body Size","Speed","Sense Range","Diet",
+  "Cold Tolerance","Heat Tolerance","Camouflage","Aggression",
+  "Longevity","Fertility","Offspring Count","Efficiency",
+  "Water Need","Leg Strength"
+];
+
+// ============================================================
+// PERLIN NOISE (Classic 2D)
+// ============================================================
+class Perlin {
+  constructor(seed) {
+    this.p = new Uint8Array(512);
+    const perm = new Uint8Array(256);
+    for (let i = 0; i < 256; i++) perm[i] = i;
+    let s = seed | 0;
+    for (let i = 255; i > 0; i--) {
+      s = (s * 1103515245 + 12345) & 0x7fffffff;
+      const j = s % (i + 1);
+      [perm[i], perm[j]] = [perm[j], perm[i]];
+    }
+    for (let i = 0; i < 512; i++) this.p[i] = perm[i & 255];
+  }
+  fade(t) { return t * t * t * (t * (t * 6 - 15) + 10); }
+  lerp(a, b, t) { return a + t * (b - a); }
+  grad(hash, x, y) {
+    const h = hash & 3;
+    const u = h < 2 ? x : -x;
+    const v = h === 0 || h === 3 ? y : -y;
+    return u + v;
+  }
+  noise(x, y) {
+    const X = Math.floor(x) & 255, Y = Math.floor(y) & 255;
+    const xf = x - Math.floor(x), yf = y - Math.floor(y);
+    const u = this.fade(xf), v = this.fade(yf);
+    const p = this.p;
+    const aa = p[p[X] + Y], ab = p[p[X] + Y + 1];
+    const ba = p[p[X + 1] + Y], bb = p[p[X + 1] + Y + 1];
+    return this.lerp(
+      this.lerp(this.grad(aa, xf, yf), this.grad(ba, xf - 1, yf), u),
+      this.lerp(this.grad(ab, xf, yf - 1), this.grad(bb, xf - 1, yf - 1), u),
+      v
+    );
+  }
+  octave(x, y, octaves, persistence, scale) {
+    let total = 0, freq = scale, amp = 1, maxAmp = 0;
+    for (let i = 0; i < octaves; i++) {
+      total += this.noise(x * freq, y * freq) * amp;
+      maxAmp += amp;
+      amp *= persistence;
+      freq *= 2;
+    }
+    return total / maxAmp;
+  }
+}
+
+// ============================================================
+// SEEDED RNG (Xoshiro128**)
+// ============================================================
+class RNG {
+  constructor(seed) {
+    let s = seed | 0;
+    this.s = new Uint32Array(4);
+    for (let i = 0; i < 4; i++) {
+      s = (s * 1664525 + 1013904223) | 0;
+      this.s[i] = s >>> 0;
+    }
+  }
+  next() {
+    const s = this.s;
+    const result = (s[1] * 5) | 0;
+    const t = s[1] << 9;
+    s[2] ^= s[0]; s[3] ^= s[1]; s[1] ^= s[2]; s[0] ^= s[3];
+    s[2] ^= t; s[3] = (s[3] << 11) | (s[3] >>> 21);
+    return (result >>> 0) / 4294967296;
+  }
+  range(min, max) { return min + this.next() * (max - min); }
+  int(min, max) { return Math.floor(this.range(min, max)); }
+  chance(p) { return this.next() < p; }
+}
+
+// ============================================================
+// BIOME DEFINITIONS
+// ============================================================
+const BIOMES = {
+  OCEAN:     {id:0, name:"Ocean",      color:[30,60,120],   growth:0,    maxBio:0},
+  ICE_CAP:   {id:1, name:"Ice Cap",    color:[220,230,245], growth:0,    maxBio:0},
+  TUNDRA:    {id:2, name:"Tundra",     color:[160,175,165], growth:0.10, maxBio:15},
+  DESERT:    {id:3, name:"Desert",     color:[210,190,140], growth:0.05, maxBio:5},
+  GRASSLAND: {id:4, name:"Grassland",  color:[120,170,80],  growth:0.60, maxBio:60},
+  TAIGA:     {id:5, name:"Taiga",      color:[60,100,70],   growth:0.25, maxBio:30},
+  FOREST:    {id:6, name:"Forest",     color:[40,120,50],   growth:0.85, maxBio:100},
+  RAINFOREST:{id:7, name:"Rainforest", color:[20,90,35],    growth:1.00, maxBio:120}
+};
+const BIOME_LIST = Object.values(BIOMES);
+
+function classifyBiome(alt, rain, temp) {
+  if (alt < 0) return BIOMES.OCEAN;
+  if (temp < -15) return BIOMES.ICE_CAP;
+  if (temp < 0) {
+    if (rain < 725) return BIOMES.TUNDRA;
+    return BIOMES.TAIGA;
+  }
+  if (rain < 275) return BIOMES.DESERT;
+  if (rain < 1375) return BIOMES.GRASSLAND;
+  if (rain < 1775) return BIOMES.FOREST;
+  return BIOMES.RAINFOREST;
+}
+
+// ============================================================
+// WORLD GENERATION
+// ============================================================
+class World {
+  constructor(seed) {
+    this.seed = seed;
+    this.W = CFG.W;
+    this.H = CFG.H;
+    this.altitude = new Float32Array(this.W * this.H);
+    this.temperature = new Float32Array(this.W * this.H);
+    this.rainfall = new Float32Array(this.W * this.H);
+    this.biome = new Uint8Array(this.W * this.H);
+    this.continents = [];
+    this.generate();
+  }
+
+  idx(x, y) { return y * this.W + x; }
+
+  generate() {
+    const rng = new RNG(this.seed);
+    const p1 = new Perlin(this.seed);
+    const p2 = new Perlin(this.seed + 1000);
+    const p3 = new Perlin(this.seed + 2000);
+
+    // Place continents
+    this.continents = [];
+    for (let i = 0; i < CFG.NUM_CONTINENTS; i++) {
+      this.continents.push({
+        x: rng.range(0.1, 0.9) * this.W,
+        y: rng.range(0.15, 0.85) * this.H,
+        size: rng.range(CFG.CONT_MIN_SIZE, CFG.CONT_MAX_SIZE)
+      });
+    }
+
+    // Stage 1: Altitude
+    for (let y = 0; y < this.H; y++) {
+      for (let x = 0; x < this.W; x++) {
+        const i = this.idx(x, y);
+
+        // Continent influence
+        let contInfluence = 0;
+        for (const c of this.continents) {
+          let dx = Math.abs(x - c.x);
+          if (dx > this.W / 2) dx = this.W - dx; // wrap
+          const dy = y - c.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          const norm = dist / c.size;
+          if (norm < 3.0) {
+            contInfluence += Math.exp(-norm * norm * 0.5);
+          }
+        }
+        contInfluence = Math.min(contInfluence, 1.5);
+
+        // Noise layers
+        const nx = x / this.W, ny = y / this.H;
+        const macro = p1.octave(nx, ny, 4, 0.5, 3.0);
+        const meso = p2.octave(nx, ny, 6, 0.55, 8.0);
+        const micro = p3.octave(nx, ny, 3, 0.4, 32.0);
+
+        // Mountain ridges
+        const ridge = Math.exp(-Math.pow(meso * 2.5, 2)) * 0.3;
+
+        let alt = (contInfluence * 0.22 + macro * 0.15 + meso * 0.1 + ridge) * 15000;
+        alt += micro * 1500;
+
+        // Edge dampening (poles)
+        const edgeFactor = Math.sin(ny * Math.PI);
+        alt *= (0.3 + 0.7 * edgeFactor);
+
+        // Normalize
+        alt = Math.max(-15000, Math.min(15000, alt - 4500));
+        this.altitude[i] = alt;
+      }
+    }
+
+    // Stage 2: Rainfall
+    for (let y = 0; y < this.H; y++) {
+      for (let x = 0; x < this.W; x++) {
+        const i = this.idx(x, y);
+        const nx = x / this.W, ny = y / this.H;
+
+        const r1 = p2.octave(nx + 5, ny + 5, 3, 0.5, 2.0);
+        const r2 = p3.octave(nx + 10, ny + 10, 2, 0.4, 16.0);
+
+        // Latitude modulation (equator wetter)
+        const latFactor = Math.sin(ny * Math.PI);
+
+        // Orographic effect
+        let oroBoost = 0;
+        const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
+        for (const [ddx, ddy] of dirs) {
+          const nx2 = (x + ddx + this.W) % this.W;
+          const ny2 = Math.max(0, Math.min(this.H - 1, y + ddy));
+          const dAlt = this.altitude[this.idx(nx2, ny2)] - this.altitude[i];
+          if (dAlt > 0) oroBoost += dAlt * 0.0004;
+        }
+
+        let rain = (0.5 + r1 * 0.3 + r2 * 0.1) * latFactor * 13000;
+        rain += oroBoost * 5000;
+
+        // Coast proximity bonus
+        if (this.altitude[i] > 0 && this.altitude[i] < 2000) {
+          rain *= 1.15;
+        }
+
+        this.rainfall[i] = Math.max(0, Math.min(13000, rain));
+      }
+    }
+
+    // Stage 3: Temperature
+    for (let y = 0; y < this.H; y++) {
+      for (let x = 0; x < this.W; x++) {
+        const i = this.idx(x, y);
+        const ny = y / this.H;
+        const nx = x / this.W;
+
+        const latTemp = Math.sin(ny * Math.PI) * 30 - 5;
+        const noise = p1.octave(nx + 20, ny + 20, 2, 0.5, 2.0) * 3;
+        const altReduction = Math.max(0, this.altitude[i]) / 1000 * CFG.TEMP_ALT_FACTOR;
+
+        this.temperature[i] = Math.max(-35, Math.min(30, latTemp + noise - altReduction));
+      }
+    }
+
+    // Stage 4: Biome classification
+    for (let y = 0; y < this.H; y++) {
+      for (let x = 0; x < this.W; x++) {
+        const i = this.idx(x, y);
+        this.biome[i] = classifyBiome(this.altitude[i], this.rainfall[i], this.temperature[i]).id;
+      }
+    }
+  }
+
+  isHabitable(x, y) {
+    const b = this.biome[this.idx(x, y)];
+    return b !== BIOMES.OCEAN.id && b !== BIOMES.ICE_CAP.id;
+  }
+
+  getBiome(x, y) { return BIOME_LIST[this.biome[this.idx(x, y)]]; }
+}
+
+// ============================================================
+// GENETICS
+// ============================================================
+function expressGene(genes) {
+  return {
+    bodySize:     0.2 + genes[G.BODY_SIZE] * 4.8,
+    speed:        0.3 + genes[G.SPEED] * 2.7,
+    senseRange:   1.0 + genes[G.SENSE_RANGE] * 7.0,
+    diet:         genes[G.DIET],
+    coldTol:      -35 + genes[G.COLD_TOL] * 40,
+    heatTol:      -5 + genes[G.HEAT_TOL] * 35,
+    camouflage:   genes[G.CAMOUFLAGE],
+    aggression:   genes[G.AGGRESSION],
+    maxAge:       50 + genes[G.LONGEVITY] * 450,
+    fertility:    30 + genes[G.FERTILITY] * 70,
+    offspringCnt: Math.round(1 + genes[G.OFFSPRING] * 3),
+    efficiency:   0.5 + genes[G.EFFICIENCY] * 1.5,
+    waterNeed:    genes[G.WATER_NEED],
+    legStrength:  genes[G.LEG_STRENGTH]
+  };
+}
+
+function crossover(a, b, rng) {
+  const child = new Float32Array(CFG.NUM_GENES);
+  const split = rng.int(1, CFG.NUM_GENES - 1);
+  for (let i = 0; i < CFG.NUM_GENES; i++) {
+    if (i < split) child[i] = a[i]; else child[i] = b[i];
+    // Blending
+    if (rng.chance(CFG.BLEND_CHANCE)) {
+      child[i] = (a[i] + b[i]) * 0.5;
+    }
+    // Mutation
+    if (rng.chance(CFG.MUTATION_RATE)) {
+      child[i] += rng.range(-CFG.MUTATION_AMOUNT, CFG.MUTATION_AMOUNT);
+    }
+    child[i] = Math.max(0, Math.min(1, child[i]));
+  }
+  return child;
+}
+
+function geneticDistance(a, b) {
+  let sum = 0;
+  for (let i = 0; i < CFG.NUM_GENES; i++) {
+    const d = a[i] - b[i];
+    sum += d * d;
+  }
+  return Math.sqrt(sum / CFG.NUM_GENES);
+}
+
+function randomGenome(rng, base, variance) {
+  const g = new Float32Array(CFG.NUM_GENES);
+  for (let i = 0; i < CFG.NUM_GENES; i++) {
+    g[i] = Math.max(0, Math.min(1, base[i] + rng.range(-variance, variance)));
+  }
+  return g;
+}
+
+function dietLabel(d) {
+  if (d < 0.35) return "Herbivore";
+  if (d <= 0.65) return "Omnivore";
+  return "Carnivore";
+}
+
+// ============================================================
+// SPECIES
+// ============================================================
+let nextSpeciesId = 0;
+class Species {
+  constructor(name, color, representativeGenome) {
+    this.id = nextSpeciesId++;
+    this.name = name;
+    this.color = color;
+    this.genome = new Float32Array(representativeGenome);
+    this.population = 0;
+    this.totalBorn = 0;
+    this.totalDied = 0;
+    this.generation = 0;
+    this.maxPop = 0;
+    this.birthTick = 0;
+    this.extinct = false;
+    this.extinctTick = -1;
+  }
+}
+
+const SPECIES_COLORS = [
+  [230,69,96],[69,162,230],[100,210,100],[230,180,50],[180,100,230],
+  [230,130,60],[60,210,190],[210,80,180],[140,200,60],[80,140,230],
+  [230,100,100],[100,230,200],[200,200,60],[160,60,200],[60,180,120],
+  [230,150,150],[100,180,230],[180,230,100],[230,200,150],[150,100,180]
+];
+
+const SPECIES_PREFIXES = ["Archi","Neo","Proto","Mega","Micro","Para","Pseudo","Ultra","Macro","Mini"];
+const SPECIES_ROOTS = ["saurus","therium","raptor","don","phyte","zoon","ptera","ceryx","gator","vora"];
+const SPECIES_SUFFIXES = ["us","is","ax","or","ix","um","a","ens","oides","alis"];
+
+function generateSpeciesName(rng) {
+  return SPECIES_PREFIXES[rng.int(0, SPECIES_PREFIXES.length)] +
+         SPECIES_ROOTS[rng.int(0, SPECIES_ROOTS.length)] +
+         SPECIES_SUFFIXES[rng.int(0, SPECIES_SUFFIXES.length)];
+}
+
+// ============================================================
+// CREATURE
+// ============================================================
+class Creature {
+  constructor(x, y, genes, speciesId) {
+    this.x = x;
+    this.y = y;
+    this.genes = genes;
+    this.pheno = expressGene(genes);
+    this.speciesId = speciesId;
+    this.energy = this.pheno.fertility * 0.8;
+    this.health = 1.0;
+    this.age = 0;
+    this.alive = true;
+    this.breedCooldown = 20;
+    this.targetX = x;
+    this.targetY = y;
+    this.moveTimer = 0;
+  }
+}
+
+// ============================================================
+// TILE ECOSYSTEM
+// ============================================================
+class TileEco {
+  constructor(biome) {
+    this.plantBiomass = biome.maxBio * 0.5;
+    this.maxBiomass = biome.maxBio;
+    this.growthRate = biome.growth;
+    this.creatureCount = 0;
+    this.herbCount = 0;
+    this.carnCount = 0;
+  }
+}
+
+// ============================================================
+// SIMULATION
+// ============================================================
+class Simulation {
+  constructor(seed) {
+    this.rng = new RNG(seed);
+    this.world = new World(seed);
+    this.tick = 0;
+    this.creatures = [];
+    this.species = [];
+    this.speciesMap = new Map(); // id -> Species
+    this.spatialGrid = null; // rebuilt each tick
+    this.ecosystem = new Array(CFG.W * CFG.H);
+    this.history = []; // population snapshots
+    this.paused = false;
+    this.selectedTile = null;
+
+    this.initEcosystem();
+    this.initCreatures();
+  }
+
+  initEcosystem() {
+    for (let y = 0; y < CFG.H; y++) {
+      for (let x = 0; x < CFG.W; x++) {
+        const i = y * CFG.W + x;
+        const biome = this.world.getBiome(x, y);
+        this.ecosystem[i] = new TileEco(biome);
+      }
+    }
+  }
+
+  initCreatures() {
+    // Find habitable tiles
+    const habitable = [];
+    for (let y = 0; y < CFG.H; y++) {
+      for (let x = 0; x < CFG.W; x++) {
+        if (this.world.isHabitable(x, y)) habitable.push([x, y]);
+      }
+    }
+    if (habitable.length === 0) return;
+
+    // Create herbivore species
+    for (let s = 0; s < CFG.INIT_HERB_SPECIES; s++) {
+      const base = new Float32Array(CFG.NUM_GENES);
+      for (let g = 0; g < CFG.NUM_GENES; g++) base[g] = this.rng.range(0.2, 0.8);
+      base[G.DIET] = this.rng.range(0.0, 0.30);  // herbivore
+      base[G.AGGRESSION] = this.rng.range(0.0, 0.3);
+
+      const col = SPECIES_COLORS[this.species.length % SPECIES_COLORS.length];
+      const sp = new Species(generateSpeciesName(this.rng), col, base);
+      sp.birthTick = 0;
+      this.species.push(sp);
+      this.speciesMap.set(sp.id, sp);
+
+      for (let c = 0; c < CFG.CREATURES_PER_SPECIES; c++) {
+        const [tx, ty] = habitable[this.rng.int(0, habitable.length)];
+        const genes = randomGenome(this.rng, base, 0.08);
+        genes[G.DIET] = Math.min(0.30, genes[G.DIET]);
+        const cr = new Creature(tx, ty, genes, sp.id);
+        this.creatures.push(cr);
+        sp.population++;
+        sp.totalBorn++;
+      }
+    }
+
+    // Create carnivore species
+    for (let s = 0; s < CFG.INIT_CARN_SPECIES; s++) {
+      const base = new Float32Array(CFG.NUM_GENES);
+      for (let g = 0; g < CFG.NUM_GENES; g++) base[g] = this.rng.range(0.2, 0.8);
+      base[G.DIET] = this.rng.range(0.70, 1.0); // carnivore
+      base[G.AGGRESSION] = this.rng.range(0.5, 1.0);
+      base[G.SPEED] = this.rng.range(0.4, 0.9);
+
+      const col = SPECIES_COLORS[this.species.length % SPECIES_COLORS.length];
+      const sp = new Species(generateSpeciesName(this.rng), col, base);
+      sp.birthTick = 0;
+      this.species.push(sp);
+      this.speciesMap.set(sp.id, sp);
+
+      for (let c = 0; c < CFG.CREATURES_PER_SPECIES; c++) {
+        const [tx, ty] = habitable[this.rng.int(0, habitable.length)];
+        const genes = randomGenome(this.rng, base, 0.08);
+        genes[G.DIET] = Math.max(0.70, genes[G.DIET]);
+        const cr = new Creature(tx, ty, genes, sp.id);
+        this.creatures.push(cr);
+        sp.population++;
+        sp.totalBorn++;
+      }
+    }
+  }
+
+  buildSpatialGrid() {
+    this.spatialGrid = new Map();
+    for (let i = 0; i < this.creatures.length; i++) {
+      const c = this.creatures[i];
+      if (!c.alive) continue;
+      const key = c.y * CFG.W + c.x;
+      if (!this.spatialGrid.has(key)) this.spatialGrid.set(key, []);
+      this.spatialGrid.get(key).push(i);
+    }
+  }
+
+  step() {
+    this.tick++;
+
+    // Phase 1: Movement & metabolism
+    for (const c of this.creatures) {
+      if (!c.alive) continue;
+
+      // Choose direction
+      c.moveTimer--;
+      if (c.moveTimer <= 0) {
+        const sr = Math.ceil(c.pheno.senseRange);
+        c.targetX = (c.x + this.rng.int(-sr, sr + 1) + CFG.W) % CFG.W;
+        c.targetY = Math.max(0, Math.min(CFG.H - 1, c.y + this.rng.int(-sr, sr + 1)));
+        c.moveTimer = 3;
+      }
+
+      // Move toward target
+      const dx = c.targetX - c.x;
+      const dy = c.targetY - c.y;
+      if (dx !== 0 || dy !== 0) {
+        // Wrap-aware movement
+        let mx = 0, my = 0;
+        if (dx !== 0) mx = Math.sign(dx);
+        if (dy !== 0) my = Math.sign(dy);
+        // Handle horizontal wrapping
+        if (Math.abs(dx) > CFG.W / 2) mx = -mx;
+
+        const newX = (c.x + mx + CFG.W) % CFG.W;
+        const newY = Math.max(0, Math.min(CFG.H - 1, c.y + my));
+
+        // Check if target tile is habitable
+        if (this.world.isHabitable(newX, newY)) {
+          c.x = newX;
+          c.y = newY;
+        }
+
+        // Movement energy cost
+        c.energy -= c.pheno.bodySize * c.pheno.speed * 0.15;
+      }
+
+      // Environmental stress
+      const temp = this.world.temperature[c.y * CFG.W + c.x];
+      if (temp < c.pheno.coldTol) {
+        c.health -= Math.abs(temp - c.pheno.coldTol) / 20 * 0.05;
+      }
+      if (temp > c.pheno.heatTol) {
+        c.health -= (temp - c.pheno.heatTol) / 20 * 0.05;
+      }
+
+      // Drought stress
+      const rain = this.world.rainfall[c.y * CFG.W + c.x];
+      const waterNeedScaled = c.pheno.waterNeed * 500;
+      if (rain < waterNeedScaled) {
+        c.health -= (waterNeedScaled - rain) / 500 * 0.02;
+      }
+
+      // Base metabolism
+      c.energy -= c.pheno.bodySize * (2.0 - c.pheno.efficiency) * 0.3;
+      c.age++;
+
+      // Death checks
+      if (c.age > c.pheno.maxAge || c.energy <= 0 || c.health <= 0) {
+        c.alive = false;
+      }
+
+      if (c.breedCooldown > 0) c.breedCooldown--;
+    }
+
+    // Phase 2: Build spatial index & update ecosystem counts
+    this.buildSpatialGrid();
+
+    // Reset eco counts
+    for (let i = 0; i < this.ecosystem.length; i++) {
+      this.ecosystem[i].creatureCount = 0;
+      this.ecosystem[i].herbCount = 0;
+      this.ecosystem[i].carnCount = 0;
+    }
+
+    for (const c of this.creatures) {
+      if (!c.alive) continue;
+      const eco = this.ecosystem[c.y * CFG.W + c.x];
+      eco.creatureCount++;
+      if (c.pheno.diet < 0.35) eco.herbCount++;
+      else if (c.pheno.diet > 0.65) eco.carnCount++;
+      else { eco.herbCount += 0.5; eco.carnCount += 0.5; }
+    }
+
+    // Plant growth (logistic)
+    for (let i = 0; i < this.ecosystem.length; i++) {
+      const eco = this.ecosystem[i];
+      if (eco.maxBiomass > 0) {
+        const growth = eco.growthRate * (1 - eco.plantBiomass / eco.maxBiomass) * eco.maxBiomass * 0.02;
+        eco.plantBiomass = Math.min(eco.maxBiomass, eco.plantBiomass + growth);
+      }
+    }
+
+    // Phase 2b: Feeding
+    for (const c of this.creatures) {
+      if (!c.alive) continue;
+      const eco = this.ecosystem[c.y * CFG.W + c.x];
+
+      // Herbivore feeding
+      if (c.pheno.diet < 0.6 && eco.plantBiomass > 0) {
+        const maxIntake = c.pheno.bodySize * 3.0 * (1 - c.pheno.diet);
+        const consumed = Math.min(maxIntake, eco.plantBiomass);
+        eco.plantBiomass -= consumed;
+        c.energy += consumed * (1 - c.pheno.diet) * 0.8;
+      }
+
+      // Carnivore hunting
+      if (c.pheno.diet > 0.2 && c.pheno.aggression > 0.2) {
+        const key = c.y * CFG.W + c.x;
+        const tileCreatures = this.spatialGrid.get(key);
+        if (tileCreatures && tileCreatures.length > 1) {
+          // Pick a random potential prey
+          const preyIdx = tileCreatures[this.rng.int(0, tileCreatures.length)];
+          const prey = this.creatures[preyIdx];
+          if (prey !== c && prey.alive && prey.pheno.bodySize < c.pheno.bodySize * 1.5) {
+            // Detection check
+            const detectChance = (c.pheno.senseRange / 8.0) * (1 - prey.pheno.camouflage * 0.7);
+            if (this.rng.chance(detectChance)) {
+              // Combat
+              const hunterPower = c.pheno.bodySize * c.pheno.speed * 0.5 + c.pheno.aggression * 2.0;
+              const preyPower = (prey.pheno.bodySize * prey.pheno.speed * 0.5 + prey.pheno.aggression * 2.0) * 0.6;
+              const successChance = hunterPower / (hunterPower + preyPower);
+              if (this.rng.chance(successChance)) {
+                // Kill
+                const foodValue = prey.pheno.bodySize * 12.0;
+                c.energy += foodValue * c.pheno.diet;
+                prey.alive = false;
+              } else {
+                // Failed hunt
+                c.energy -= 2.0;
+                prey.energy -= 1.0;
+                if (this.rng.chance(0.2)) c.health -= 0.05; // counter injury
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Phase 3: Reproduction
+    const newCreatures = [];
+    for (let i = 0; i < this.creatures.length && this.creatures.length + newCreatures.length < CFG.MAX_CREATURES; i++) {
+      const c = this.creatures[i];
+      if (!c.alive || c.age < 10 || c.breedCooldown > 0 || c.energy < c.pheno.fertility) continue;
+
+      // Find mate on same tile
+      const key = c.y * CFG.W + c.x;
+      const tileCreatures = this.spatialGrid.get(key);
+      if (!tileCreatures) continue;
+
+      let mate = null;
+      for (const idx of tileCreatures) {
+        const m = this.creatures[idx];
+        if (m !== c && m.alive && m.speciesId === c.speciesId &&
+            m.age > 10 && m.breedCooldown <= 0 && m.energy > m.pheno.fertility) {
+          mate = m;
+          break;
+        }
+      }
+      if (!mate) continue;
+
+      const avgOffspring = Math.round((c.pheno.offspringCnt + mate.pheno.offspringCnt) / 2);
+      const costPer = c.pheno.fertility * 0.3;
+
+      for (let o = 0; o < avgOffspring && this.creatures.length + newCreatures.length < CFG.MAX_CREATURES; o++) {
+        const childGenes = crossover(c.genes, mate.genes, this.rng);
+        const child = new Creature(c.x, c.y, childGenes, c.speciesId);
+        child.energy = costPer * 0.8;
+        newCreatures.push(child);
+
+        const sp = this.speciesMap.get(c.speciesId);
+        if (sp) {
+          sp.population++;
+          sp.totalBorn++;
+          sp.generation = Math.max(sp.generation, Math.floor(c.age / c.pheno.maxAge * 10));
+        }
+      }
+
+      c.energy -= costPer * avgOffspring * 0.6;
+      mate.energy -= costPer * avgOffspring * 0.4;
+      c.breedCooldown = Math.floor(15 + c.pheno.maxAge / 10);
+      mate.breedCooldown = Math.floor(15 + mate.pheno.maxAge / 10);
+    }
+    this.creatures.push(...newCreatures);
+
+    // Phase 4: Remove dead
+    for (const c of this.creatures) {
+      if (!c.alive) {
+        const sp = this.speciesMap.get(c.speciesId);
+        if (sp) {
+          sp.population--;
+          sp.totalDied++;
+          if (sp.population <= 0 && !sp.extinct) {
+            sp.extinct = true;
+            sp.extinctTick = this.tick;
+          }
+        }
+      }
+    }
+    this.creatures = this.creatures.filter(c => c.alive);
+
+    // Phase 5: Speciation check
+    if (this.tick % CFG.SPECIATION_INTERVAL === 0) {
+      this.checkSpeciation();
+    }
+
+    // Phase 6: Snapshot
+    if (this.tick % CFG.SNAPSHOT_INTERVAL === 0) {
+      this.takeSnapshot();
+    }
+  }
+
+  checkSpeciation() {
+    for (const c of this.creatures) {
+      const sp = this.speciesMap.get(c.speciesId);
+      if (!sp) continue;
+      const dist = geneticDistance(c.genes, sp.genome);
+      if (dist > CFG.SPECIATION_THRESHOLD) {
+        // New species!
+        const col = SPECIES_COLORS[this.species.length % SPECIES_COLORS.length];
+        const newSp = new Species(generateSpeciesName(this.rng), col, c.genes);
+        newSp.birthTick = this.tick;
+        newSp.generation = sp.generation + 1;
+        this.species.push(newSp);
+        this.speciesMap.set(newSp.id, newSp);
+
+        // Reassign this creature
+        sp.population--;
+        c.speciesId = newSp.id;
+        newSp.population++;
+        newSp.totalBorn++;
+
+        // Check nearby same-species creatures
+        for (const other of this.creatures) {
+          if (other === c || !other.alive || other.speciesId !== sp.id) continue;
+          const dx = Math.abs(other.x - c.x);
+          const dy = Math.abs(other.y - c.y);
+          if (dx < 10 && dy < 10) {
+            const d2 = geneticDistance(other.genes, c.genes);
+            if (d2 < CFG.SPECIATION_THRESHOLD * 0.7) {
+              sp.population--;
+              other.speciesId = newSp.id;
+              newSp.population++;
+              newSp.totalBorn++;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  takeSnapshot() {
+    let herbs = 0, carns = 0;
+    for (const c of this.creatures) {
+      if (c.pheno.diet < 0.35) herbs++;
+      else if (c.pheno.diet > 0.65) carns++;
+      else { herbs += 0.5; carns += 0.5; }
+    }
+    const livingSpecies = this.species.filter(s => !s.extinct).length;
+
+    this.history.push({
+      tick: this.tick,
+      total: this.creatures.length,
+      herbivores: Math.round(herbs),
+      carnivores: Math.round(carns),
+      species: livingSpecies
+    });
+
+    if (this.history.length > CFG.MAX_SNAPSHOTS) {
+      this.history = this.history.slice(this.history.length - CFG.MAX_SNAPSHOTS + 100);
+    }
+
+    // Update species max pop
+    for (const sp of this.species) {
+      if (sp.population > sp.maxPop) sp.maxPop = sp.population;
+    }
+  }
+
+  getLivingSpecies() {
+    return this.species.filter(s => !s.extinct && s.population > 0)
+      .sort((a, b) => b.population - a.population);
+  }
+
+  getTileInfo(x, y) {
+    const i = y * CFG.W + x;
+    const biome = BIOME_LIST[this.world.biome[i]];
+    const eco = this.ecosystem[i];
+    const creaturesHere = [];
+    for (const c of this.creatures) {
+      if (c.alive && c.x === x && c.y === y) creaturesHere.push(c);
+    }
+    return {
+      x, y, biome: biome.name,
+      altitude: Math.round(this.world.altitude[i]),
+      temperature: this.world.temperature[i].toFixed(1),
+      rainfall: Math.round(this.world.rainfall[i]),
+      plantBiomass: eco.plantBiomass.toFixed(1),
+      maxBiomass: eco.maxBiomass,
+      growthRate: (eco.growthRate * 100).toFixed(0),
+      creatures: creaturesHere,
+      creatureCount: eco.creatureCount
+    };
+  }
+}
+
+// ============================================================
+// RENDERER
+// ============================================================
+class Renderer {
+  constructor(canvas, sim) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext('2d');
+    this.sim = sim;
+    this.viewMode = 'biome';
+    this.showCreatures = true;
+    this.tileSize = CFG.TILE_SIZE;
+    this.offsetX = 0;
+    this.offsetY = 0;
+    this.scale = 1;
+    this.terrainBuffer = null;
+    this.terrainDirty = true;
+
+    this.resize();
+    this.buildTerrainBuffer();
+  }
+
+  resize() {
+    const wrap = this.canvas.parentElement;
+    this.canvas.width = wrap.clientWidth;
+    this.canvas.height = wrap.clientHeight;
+
+    // Fit world to screen
+    const sx = this.canvas.width / (CFG.W * this.tileSize);
+    const sy = this.canvas.height / (CFG.H * this.tileSize);
+    this.scale = Math.min(sx, sy);
+
+    // Center
+    this.offsetX = (this.canvas.width - CFG.W * this.tileSize * this.scale) / 2;
+    this.offsetY = (this.canvas.height - CFG.H * this.tileSize * this.scale) / 2;
+  }
+
+  buildTerrainBuffer() {
+    const w = CFG.W, h = CFG.H;
+    const imgData = new ImageData(w, h);
+    const data = imgData.data;
+    const world = this.sim.world;
+
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        const pi = i * 4;
+        let r, g, b;
+
+        if (this.viewMode === 'biome') {
+          const biome = BIOME_LIST[world.biome[i]];
+          const altShade = world.altitude[i] > 0 ? 1.0 - (world.altitude[i] / 30000) : 1.0;
+          r = biome.color[0] * altShade;
+          g = biome.color[1] * altShade;
+          b = biome.color[2] * altShade;
+        } else if (this.viewMode === 'altitude') {
+          const norm = (world.altitude[i] + 15000) / 30000;
+          if (world.altitude[i] < 0) {
+            r = 20; g = 30 + norm * 100; b = 100 + norm * 155;
+          } else {
+            r = 50 + norm * 180; g = 120 + norm * 100; b = 40;
+          }
+        } else if (this.viewMode === 'temperature') {
+          const norm = (world.temperature[i] + 35) / 65;
+          r = norm * 255;
+          g = (1 - Math.abs(norm - 0.5) * 2) * 180;
+          b = (1 - norm) * 255;
+        } else if (this.viewMode === 'rainfall') {
+          const norm = world.rainfall[i] / 13000;
+          r = 20;
+          g = 40 + norm * 200;
+          b = 80 + norm * 175;
+        }
+
+        data[pi] = Math.max(0, Math.min(255, r));
+        data[pi + 1] = Math.max(0, Math.min(255, g));
+        data[pi + 2] = Math.max(0, Math.min(255, b));
+        data[pi + 3] = 255;
+      }
+    }
+
+    // Create offscreen canvas for terrain
+    const offscreen = document.createElement('canvas');
+    offscreen.width = w;
+    offscreen.height = h;
+    offscreen.getContext('2d').putImageData(imgData, 0, 0);
+    this.terrainBuffer = offscreen;
+    this.terrainDirty = false;
+  }
+
+  draw() {
+    if (this.terrainDirty) this.buildTerrainBuffer();
+
+    const ctx = this.ctx;
+    ctx.fillStyle = '#0a0a1a';
+    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+    ctx.save();
+    ctx.translate(this.offsetX, this.offsetY);
+    ctx.scale(this.scale * this.tileSize, this.scale * this.tileSize);
+
+    // Draw terrain
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(this.terrainBuffer, 0, 0);
+
+    // Draw creatures
+    if (this.showCreatures) {
+      for (const c of this.sim.creatures) {
+        if (!c.alive) continue;
+        const sp = this.sim.speciesMap.get(c.speciesId);
+        if (sp) {
+          ctx.fillStyle = `rgb(${sp.color[0]},${sp.color[1]},${sp.color[2]})`;
+        } else {
+          ctx.fillStyle = '#fff';
+        }
+        const size = Math.max(0.3, Math.min(0.9, c.pheno.bodySize / 5));
+        const off = (1 - size) / 2;
+        ctx.fillRect(c.x + off, c.y + off, size, size);
+      }
+    }
+
+    // Draw selected tile highlight
+    if (this.sim.selectedTile) {
+      const [sx, sy] = this.sim.selectedTile;
+      ctx.strokeStyle = '#e94560';
+      ctx.lineWidth = 0.15;
+      ctx.strokeRect(sx, sy, 1, 1);
+    }
+
+    ctx.restore();
+  }
+
+  screenToTile(sx, sy) {
+    const tx = Math.floor((sx - this.offsetX) / (this.scale * this.tileSize));
+    const ty = Math.floor((sy - this.offsetY) / (this.scale * this.tileSize));
+    if (tx >= 0 && tx < CFG.W && ty >= 0 && ty < CFG.H) return [tx, ty];
+    return null;
+  }
+}
+
+// ============================================================
+// GRAPH RENDERER
+// ============================================================
+function drawPopulationGraph(canvas, history, species) {
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width = canvas.parentElement.clientWidth - 20;
+  const h = canvas.height = 200;
+
+  ctx.fillStyle = '#1a1a2e';
+  ctx.fillRect(0, 0, w, h);
+
+  if (history.length < 2) return;
+
+  const maxPop = Math.max(10, ...history.map(h => h.total));
+  const pad = {l: 40, r: 10, t: 10, b: 20};
+  const gw = w - pad.l - pad.r;
+  const gh = h - pad.t - pad.b;
+
+  // Grid
+  ctx.strokeStyle = '#0f3460';
+  ctx.lineWidth = 0.5;
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.t + (gh / 4) * i;
+    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(w - pad.r, y); ctx.stroke();
+    ctx.fillStyle = '#606080';
+    ctx.font = '10px system-ui';
+    ctx.textAlign = 'right';
+    ctx.fillText(Math.round(maxPop * (1 - i / 4)), pad.l - 4, y + 4);
+  }
+
+  // Lines
+  const drawLine = (key, color) => {
+    ctx.beginPath();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    for (let i = 0; i < history.length; i++) {
+      const x = pad.l + (i / (history.length - 1)) * gw;
+      const y = pad.t + gh - (history[i][key] / maxPop) * gh;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  };
+
+  drawLine('total', '#e0e0e0');
+  drawLine('herbivores', '#66cc66');
+  drawLine('carnivores', '#e94560');
+
+  // Axis labels
+  ctx.fillStyle = '#606080';
+  ctx.font = '10px system-ui';
+  ctx.textAlign = 'center';
+  if (history.length > 0) {
+    ctx.fillText(`Tick ${history[0].tick}`, pad.l, h - 2);
+    ctx.fillText(`Tick ${history[history.length - 1].tick}`, w - pad.r, h - 2);
+  }
+}
+
+// ============================================================
+// UI CONTROLLER
+// ============================================================
+class App {
+  constructor() {
+    this.sim = null;
+    this.renderer = null;
+    this.speed = 3;
+    this.animId = null;
+    this.lastFrame = 0;
+    this.sidebarCollapsed = false;
+  }
+
+  init() {
+    this.showLoading(0, "Generating world...");
+
+    setTimeout(() => {
+      const seed = Date.now() ^ (Math.random() * 0xffffffff);
+      this.sim = new Simulation(seed);
+      this.showLoading(50, "Populating creatures...");
+
+      setTimeout(() => {
+        const canvas = document.getElementById('world-canvas');
+        this.renderer = new Renderer(canvas, this.sim);
+        this.showLoading(80, "Rendering...");
+
+        setTimeout(() => {
+          this.setupUI();
+          this.hideLoading();
+          this.startLoop();
+        }, 50);
+      }, 50);
+    }, 50);
+  }
+
+  showLoading(pct, text) {
+    document.getElementById('load-bar').style.width = pct + '%';
+    document.getElementById('load-text').textContent = text;
+  }
+
+  hideLoading() {
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('app').style.display = 'flex';
+  }
+
+  setupUI() {
+    // Pause button
+    document.getElementById('btn-pause').addEventListener('click', () => {
+      this.sim.paused = !this.sim.paused;
+      document.getElementById('btn-pause').textContent = this.sim.paused ? 'Play' : 'Pause';
+      document.getElementById('btn-pause').classList.toggle('active', this.sim.paused);
+    });
+
+    // Speed slider
+    document.getElementById('speed-slider').addEventListener('input', (e) => {
+      this.speed = parseInt(e.target.value);
+    });
+
+    // View select
+    document.getElementById('view-select').addEventListener('change', (e) => {
+      this.renderer.viewMode = e.target.value;
+      this.renderer.terrainDirty = true;
+    });
+
+    // Show creatures toggle
+    document.getElementById('btn-creatures').addEventListener('click', (e) => {
+      this.renderer.showCreatures = !this.renderer.showCreatures;
+      e.target.classList.toggle('active', this.renderer.showCreatures);
+    });
+
+    // New world
+    document.getElementById('btn-new').addEventListener('click', () => {
+      const seed = Date.now() ^ (Math.random() * 0xffffffff);
+      nextSpeciesId = 0;
+      this.sim = new Simulation(seed);
+      this.renderer.sim = this.sim;
+      this.renderer.terrainDirty = true;
+    });
+
+    // Sidebar toggle
+    const sidebarToggle = document.getElementById('sidebar-toggle');
+    sidebarToggle.addEventListener('click', () => {
+      this.sidebarCollapsed = !this.sidebarCollapsed;
+      document.getElementById('sidebar').classList.toggle('collapsed', this.sidebarCollapsed);
+      sidebarToggle.classList.toggle('collapsed', this.sidebarCollapsed);
+      sidebarToggle.innerHTML = this.sidebarCollapsed ? '&rsaquo;' : '&lsaquo;';
+      setTimeout(() => this.renderer.resize(), 250);
+    });
+
+    // Tab switching
+    document.querySelectorAll('#tab-bar button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('#tab-bar button').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById(btn.dataset.tab).classList.add('active');
+      });
+    });
+
+    // Canvas click for tile info
+    const canvas = document.getElementById('world-canvas');
+    const handleTap = (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const x = (e.clientX || e.touches[0].clientX) - rect.left;
+      const y = (e.clientY || e.touches[0].clientY) - rect.top;
+      const tile = this.renderer.screenToTile(x, y);
+      if (tile) {
+        this.sim.selectedTile = tile;
+        this.updateTileInfo(tile[0], tile[1]);
+        // Switch to tile tab
+        document.querySelectorAll('#tab-bar button').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+        document.querySelector('[data-tab="tile-tab"]').classList.add('active');
+        document.getElementById('tile-tab').classList.add('active');
+      }
+    };
+    canvas.addEventListener('click', handleTap);
+    canvas.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      handleTap(e);
+    }, { passive: false });
+
+    // Resize
+    window.addEventListener('resize', () => {
+      this.renderer.resize();
+    });
+  }
+
+  updateTileInfo(tx, ty) {
+    const info = this.sim.getTileInfo(tx, ty);
+    const el = document.getElementById('tile-info');
+    let html = `
+      <p><span class="label">Position:</span> <span class="value">${info.x}, ${info.y}</span></p>
+      <p><span class="label">Biome:</span> <span class="value">${info.biome}</span></p>
+      <p><span class="label">Altitude:</span> <span class="value">${info.altitude}m</span></p>
+      <p><span class="label">Temperature:</span> <span class="value">${info.temperature}&deg;C</span></p>
+      <p><span class="label">Rainfall:</span> <span class="value">${info.rainfall}</span></p>
+      <p><span class="label">Plant Biomass:</span> <span class="value">${info.plantBiomass} / ${info.maxBiomass}</span></p>
+      <p><span class="label">Growth Rate:</span> <span class="value">${info.growthRate}%</span></p>
+      <p><span class="label">Creatures:</span> <span class="value">${info.creatureCount}</span></p>
+    `;
+    if (info.creatures.length > 0) {
+      html += `<hr style="border-color:#0f3460;margin:8px 0">`;
+      for (const c of info.creatures.slice(0, 8)) {
+        const sp = this.sim.speciesMap.get(c.speciesId);
+        const spName = sp ? sp.name : '?';
+        const spCol = sp ? `rgb(${sp.color.join(',')})` : '#fff';
+        html += `<div class="species-card" style="border-left:3px solid ${spCol}">
+          <div class="name" style="color:${spCol}">${spName}</div>
+          <div class="stats">
+            ${dietLabel(c.pheno.diet)} | Size: ${c.pheno.bodySize.toFixed(1)} | Age: ${c.age}/${Math.round(c.pheno.maxAge)}<br>
+            Energy: ${c.energy.toFixed(1)} | Health: ${(c.health * 100).toFixed(0)}%
+          </div>
+        </div>`;
+      }
+      if (info.creatures.length > 8) {
+        html += `<p style="color:#a0a0c0;font-size:11px">...and ${info.creatures.length - 8} more</p>`;
+      }
+    }
+    el.innerHTML = html;
+  }
+
+  updateSpeciesList() {
+    const living = this.sim.getLivingSpecies();
+    const el = document.getElementById('species-tab');
+    let html = '';
+    for (const sp of living.slice(0, 20)) {
+      const avgGenome = sp.genome;
+      const pheno = expressGene(avgGenome);
+      const dietStr = dietLabel(pheno.diet);
+      const col = `rgb(${sp.color.join(',')})`;
+
+      html += `<div class="species-card" style="border-left:3px solid ${col}">
+        <div class="name" style="color:${col}">${sp.name}</div>
+        <div class="stats">
+          ${dietStr} | Pop: ${sp.population} | Max: ${sp.maxPop} | Gen: ${sp.generation}<br>
+          Born tick ${sp.birthTick} | Total born: ${sp.totalBorn}
+        </div>`;
+
+      // Gene bars
+      for (let g = 0; g < CFG.NUM_GENES; g++) {
+        const val = avgGenome[g];
+        html += `<div class="gene-row">
+          <span style="width:90px">${GENE_NAMES[g]}</span>
+          <div class="gene-bar"><div class="gene-fill" style="width:${val * 100}%;background:${col}"></div></div>
+          <span style="width:30px;text-align:right">${(val * 100).toFixed(0)}%</span>
+        </div>`;
+      }
+      html += `</div>`;
+    }
+
+    // Extinct species summary
+    const extinct = this.sim.species.filter(s => s.extinct);
+    if (extinct.length > 0) {
+      html += `<p style="color:#a0a0c0;font-size:12px;margin-top:8px">Extinct species: ${extinct.length}</p>`;
+      for (const sp of extinct.slice(-5)) {
+        html += `<p style="color:#606080;font-size:11px">${sp.name} - died tick ${sp.extinctTick}</p>`;
+      }
+    }
+
+    el.innerHTML = html;
+  }
+
+  updateGraph() {
+    const canvas = document.getElementById('pop-graph');
+    if (canvas.parentElement.classList.contains('active')) {
+      drawPopulationGraph(canvas, this.sim.history, this.sim.species);
+
+      // Legend
+      const legend = document.getElementById('graph-legend');
+      legend.innerHTML = `
+        <span class="legend-item"><span class="legend-dot" style="background:#e0e0e0"></span>Total</span>
+        <span class="legend-item"><span class="legend-dot" style="background:#66cc66"></span>Herbivores</span>
+        <span class="legend-item"><span class="legend-dot" style="background:#e94560"></span>Carnivores</span>
+      `;
+    }
+  }
+
+  startLoop() {
+    const loop = (timestamp) => {
+      this.animId = requestAnimationFrame(loop);
+
+      // Simulation steps
+      if (!this.sim.paused) {
+        for (let i = 0; i < this.speed; i++) {
+          this.sim.step();
+        }
+      }
+
+      // Render
+      this.renderer.draw();
+
+      // Update UI (throttled)
+      if (timestamp - this.lastFrame > 500) {
+        this.lastFrame = timestamp;
+        document.getElementById('stat-tick').textContent = this.sim.tick;
+        document.getElementById('stat-pop').textContent = this.sim.creatures.length;
+        document.getElementById('stat-species').textContent =
+          this.sim.species.filter(s => !s.extinct && s.population > 0).length;
+
+        this.updateSpeciesList();
+        this.updateGraph();
+
+        if (this.sim.selectedTile) {
+          this.updateTileInfo(this.sim.selectedTile[0], this.sim.selectedTile[1]);
+        }
+      }
+    };
+    requestAnimationFrame(loop);
+  }
+}
+
+// ============================================================
+// START
+// ============================================================
+window.addEventListener('load', () => {
+  const app = new App();
+  app.init();
+});
+</script>
+</body>
+</html>
