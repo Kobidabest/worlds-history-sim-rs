@@ -1396,10 +1396,27 @@ class App {
 // ============================================================
 // START
 // ============================================================
-window.addEventListener('load', () => {
-  const app = new App();
-  app.init();
-});
+(function() {
+  let started = false;
+  function startApp() {
+    if (started) return;
+    started = true;
+    try {
+      const app = new App();
+      app.init();
+    } catch(e) {
+      const ld = document.getElementById('load-text');
+      if (ld) ld.textContent = 'Error: ' + e.message;
+      console.error(e);
+    }
+  }
+  if (document.readyState === 'complete' || document.readyState === 'interactive') {
+    setTimeout(startApp, 0);
+  } else {
+    document.addEventListener('DOMContentLoaded', startApp);
+    window.addEventListener('load', startApp);
+  }
+})();
 </script>
 </body>
 </html>
