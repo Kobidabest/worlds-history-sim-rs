@@ -1,3 +1,6 @@
+[workspace]
+members = ["planet", "simulation"]
+
 [package]
 name = "worlds-history-sim-rs"
 version = "0.3.1"

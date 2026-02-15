@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Evolution & Ecosystem Simulator</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="app">
+        <header id="toolbar">
+            <h1>Evolution Simulator</h1>
+            <div class="controls">
+                <div class="control-group">
+                    <label for="seed-input">Seed:</label>
+                    <input type="number" id="seed-input" value="42" min="0" max="999999">
+                    <button id="btn-new" title="Generate New World">New World</button>
+                </div>
+                <div class="control-group">
+                    <button id="btn-play" title="Play/Pause">&#9654; Play</button>
+                    <button id="btn-step" title="Single Step">Step</button>
+                    <label for="speed-slider">Speed:</label>
+                    <input type="range" id="speed-slider" min="1" max="20" value="1">
+                    <span id="speed-label">1x</span>
+                </div>
+                <div class="control-group">
+                    <span id="tick-display">Tick: 0</span>
+                    <span id="pop-display">Pop: 0</span>
+                    <span id="species-display">Species: 0</span>
+                </div>
+                <div class="control-group">
+                    <label for="view-mode">View:</label>
+                    <select id="view-mode">
+                        <option value="biome">Biomes</option>
+                        <option value="altitude">Altitude</option>
+                        <option value="temperature">Temperature</option>
+                        <option value="rainfall">Rainfall</option>
+                    </select>
+                    <label>
+                        <input type="checkbox" id="show-creatures" checked> Creatures
+                    </label>
+                </div>
+            </div>
+        </header>
+
+        <div id="main-content">
+            <div id="canvas-container">
+                <canvas id="world-canvas"></canvas>
+                <div id="loading-overlay">
+                    <div class="spinner"></div>
+                    <p>Generating world...</p>
+                </div>
+            </div>
+
+            <aside id="sidebar">
+                <div id="tab-buttons">
+                    <button class="tab-btn active" data-tab="species-tab">Species</button>
+                    <button class="tab-btn" data-tab="tile-tab">Tile Info</button>
+                    <button class="tab-btn" data-tab="graph-tab">Graph</button>
+                </div>
+
+                <div id="species-tab" class="tab-content active">
+                    <h3>Living Species</h3>
+                    <div id="species-list"></div>
+                </div>
+
+                <div id="tile-tab" class="tab-content">
+                    <h3>Tile Information</h3>
+                    <p class="hint">Click on the map to inspect a tile.</p>
+                    <div id="tile-info"></div>
+                </div>
+
+                <div id="graph-tab" class="tab-content">
+                    <h3>Population History</h3>
+                    <canvas id="graph-canvas" width="350" height="250"></canvas>
+                    <div id="graph-legend"></div>
+                </div>
+            </aside>
+        </div>
+    </div>
+
+    <script type="module" src="app.js"></script>
+</body>
+</html>
