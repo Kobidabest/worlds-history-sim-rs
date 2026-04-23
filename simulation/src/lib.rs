@@ -4,6 +4,7 @@ pub mod ecosystem;
 pub mod genetics;
 pub mod math_util;
 pub mod perlin;
+pub mod planet;
 pub mod simulation;
 pub mod species;
 pub mod wasm_api;

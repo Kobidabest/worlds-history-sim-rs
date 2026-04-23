@@ -1,4 +1,5 @@
 use crate::genetics::{Genome, Phenotype};
+use crate::planet::PlanetConfig;
 use rand::{rngs::SmallRng, Rng};
 use serde::{Deserialize, Serialize};
 
@@ -161,6 +162,74 @@ impl Creature {
         }
     }
 
+    /// Apply planet-level pressures: ionizing radiation, toxic atmosphere,
+    /// gravity, and ambient photosynthesis. These are the traits that
+    /// make evolution on alien worlds look genuinely different.
+    pub fn apply_planet_stress(
+        &mut self,
+        planet: &PlanetConfig,
+        local_radiation_bonus: f32,
+        in_liquid_biome: bool,
+    ) {
+        if !self.alive {
+            return;
+        }
+
+        // Ionizing radiation damages unshielded DNA -> health loss.
+        let rad = (planet.effective_radiation() + local_radiation_bonus).min(1.0);
+        let unshielded = (rad - self.phenotype.radiation_tolerance).max(0.0);
+        if unshielded > 0.0 {
+            self.health -= unshielded * 0.035;
+            self.energy -= unshielded * 0.4;
+        }
+
+        // Toxic atmosphere: anyone not chemically adapted suffers.
+        let tox = planet.toxic_load();
+        let exposed = (tox - self.phenotype.toxic_tolerance).max(0.0);
+        if exposed > 0.0 {
+            self.health -= exposed * 0.04;
+            self.energy -= exposed * 0.5;
+        }
+
+        // Pressure mismatch is symmetric: too-low and too-high are both bad.
+        // Gene 0.0 = vacuum-adapted, 1.0 = deep-crush-adapted.
+        let p_target = (planet.surface_pressure / 6.0).clamp(0.0, 1.0);
+        let p_gap = (p_target - self.phenotype.pressure_tolerance).abs();
+        if p_gap > 0.15 {
+            let s = (p_gap - 0.15) * 1.5;
+            self.health -= s * 0.02;
+            self.energy -= s * 0.25;
+        }
+
+        // Gravity scales movement and base metabolism costs.
+        // We already burned base metabolism this tick, so pay the delta here.
+        let g_penalty = (planet.gravity - 1.0) * self.phenotype.body_size * 0.08;
+        if g_penalty > 0.0 {
+            self.energy -= g_penalty;
+            // Extreme gravity can also injure large bodies.
+            if planet.gravity > 1.8 && self.phenotype.body_size > 3.5 {
+                self.health -= (planet.gravity - 1.8) * 0.02;
+            }
+        }
+
+        // Solvent mismatch: being stranded in liquid you can't metabolize is bad.
+        if in_liquid_biome {
+            // Drowning / solvent incompatibility for any creature not on its
+            // home solvent. For simplicity, penalize all land creatures in
+            // liquid tiles slightly.
+            self.health -= 0.03;
+            self.energy -= 0.5;
+        }
+
+        // Passive photosynthesis gain, modulated by the star class and
+        // local biome productivity. The scale here is small; the real
+        // benefit is lower net metabolism in Phenotype::base_energy_cost.
+        if self.phenotype.photosynthesis > 0.05 {
+            let solar = planet.star_class.photosynthesis_efficiency();
+            self.energy += self.phenotype.photosynthesis * solar * 0.4;
+        }
+    }
+
     /// Eat plant biomass. Returns amount consumed.
     pub fn eat_plants(&mut self, available: f32) -> f32 {
         if !self.alive || self.phenotype.is_carnivore() {
@@ -234,6 +303,7 @@ impl Creature {
         &mut self,
         partner: &mut Creature,
         next_id: CreatureId,
+        mutation_scale: f32,
         rng: &mut SmallRng,
     ) -> Vec<Creature> {
         if !self.can_reproduce() || !partner.can_reproduce() {
@@ -248,7 +318,8 @@ impl Creature {
 
         let mut offspring = Vec::new();
         for i in 0..offspring_count {
-            let child_genome = Genome::crossover(&self.genome, &partner.genome, rng);
+            let child_genome =
+                Genome::crossover(&self.genome, &partner.genome, mutation_scale, rng);
             let child = Creature::new(
                 next_id + i as u64,
                 self.species_id,

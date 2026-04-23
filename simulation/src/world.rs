@@ -1,7 +1,8 @@
 use crate::{
-    biome::{BiomeStats, BiomeType},
+    biome::{biome_stats_for, BiomeStats, BiomeType},
     math_util::{cartesian_coordinates, mix_values, random_point_in_sphere, repeat, Vec3},
     perlin,
+    planet::{PlanetConfig, Solvent},
 };
 use rand::{rngs::SmallRng, Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
@@ -10,6 +11,7 @@ use std::f32::consts::{PI, TAU};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TerrainCell {
     pub altitude: f32,
+    /// Liquid precipitation in the planet's solvent (mm/yr equivalent).
     pub rainfall: f32,
     pub temperature: f32,
     pub biome_presences: Vec<(BiomeType, f32)>,
@@ -46,30 +48,36 @@ pub struct World {
     pub width: u32,
     pub height: u32,
     pub seed: u32,
+    pub planet: PlanetConfig,
     pub terrain: Vec<Vec<TerrainCell>>,
     continent_offsets: Vec<[f32; 2]>,
     continent_sizes: Vec<[f32; 2]>,
 }
 
 impl World {
-    pub const MAX_ALTITUDE: f32 = 15000.0;
-    pub const MIN_ALTITUDE: f32 = -15000.0;
+    // Normalizing constants used by the noise layer. Per-planet range is
+    // applied post-normalization via PlanetConfig.
     pub const MAX_RAINFALL: f32 = 13000.0;
-    pub const MIN_RAINFALL: f32 = 0.0;
-    pub const MAX_TEMPERATURE: f32 = 30.0;
-    pub const MIN_TEMPERATURE: f32 = -35.0;
     pub const NUM_CONTINENTS: usize = 12;
 
-    const ALTITUDE_SPAN: f32 = Self::MAX_ALTITUDE - Self::MIN_ALTITUDE;
-    const RAINFALL_SPAN: f32 = Self::MAX_RAINFALL - Self::MIN_RAINFALL;
     const RAINFALL_DRYNESS_FACTOR: f32 = 0.005;
-    const RAINFALL_DRYNESS_OFFSET: f32 = Self::RAINFALL_DRYNESS_FACTOR * Self::MAX_RAINFALL;
-    const TEMPERATURE_SPAN: f32 = Self::MAX_TEMPERATURE - Self::MIN_TEMPERATURE;
+    const RAINFALL_DRYNESS_OFFSET: f32 =
+        Self::RAINFALL_DRYNESS_FACTOR * Self::MAX_RAINFALL;
     const TEMPERATURE_ALTITUDE_FACTOR: f32 = 2.05;
     const CONTINENT_MAX_SIZE_FACTOR: f32 = 8.7;
     const CONTINENT_MIN_SIZE_FACTOR: f32 = 5.7;
 
+    /// Legacy Earthlike generator. Kept for backward compatibility.
     pub fn generate(width: u32, height: u32, seed: u32) -> Self {
+        Self::generate_for_planet(width, height, seed, PlanetConfig::earthlike())
+    }
+
+    pub fn generate_for_planet(
+        width: u32,
+        height: u32,
+        seed: u32,
+        planet: PlanetConfig,
+    ) -> Self {
         let mut rng = SmallRng::seed_from_u64(seed as u64);
         let terrain = vec![vec![TerrainCell::default(); width as usize]; height as usize];
         let continent_offsets = vec![[0.0, 0.0]; Self::NUM_CONTINENTS];
@@ -79,6 +87,7 @@ impl World {
             width,
             height,
             seed,
+            planet,
             terrain,
             continent_offsets,
             continent_sizes,
@@ -101,8 +110,19 @@ impl World {
         const LATITUDE_FACTOR: f32 = 6.0;
 
         let mut prev_x = rng.gen_range(0.0..width * (LONGITUDE_FACTOR - 1.0) / LONGITUDE_FACTOR);
-        let mut prev_y =
-            rng.gen_range(height / LATITUDE_FACTOR..height * (LATITUDE_FACTOR - 1.0) / LATITUDE_FACTOR);
+        let mut prev_y = rng
+            .gen_range(height / LATITUDE_FACTOR..height * (LATITUDE_FACTOR - 1.0) / LATITUDE_FACTOR);
+
+        // Ocean-heavy planets spread continents wider & smaller; dry planets
+        // cluster them into big landmasses.
+        let ocean_bias = self.planet.ocean_fraction;
+        let size_scale = if ocean_bias > 0.7 {
+            0.7
+        } else if ocean_bias < 0.2 {
+            1.35
+        } else {
+            1.0
+        };
 
         for i in 0..Self::NUM_CONTINENTS {
             let width_offset: f32 = rng.gen_range(0.0..6.0);
@@ -112,11 +132,11 @@ impl World {
                 rng.gen_range(
                     Self::CONTINENT_MIN_SIZE_FACTOR + width_offset
                         ..Self::CONTINENT_MAX_SIZE_FACTOR + width_offset,
-                ),
+                ) * size_scale,
                 rng.gen_range(
                     Self::CONTINENT_MIN_SIZE_FACTOR + width_offset
                         ..Self::CONTINENT_MAX_SIZE_FACTOR + width_offset,
-                ),
+                ) * size_scale,
             ];
 
             let y_position = rng.gen_range(
@@ -218,6 +238,13 @@ impl World {
         let o8 = Self::random_offset_vector(rng);
         let o9 = Self::random_offset_vector(rng);
 
+        let (min_alt, max_alt) = self.planet.altitude_span();
+        let span = max_alt - min_alt;
+
+        // Shift the sea-level threshold up/down to hit the target ocean_fraction.
+        // ocean_fraction=0.5 keeps the classic zero crossing.
+        let ocean_shift = (self.planet.ocean_fraction - 0.5) * 0.35;
+
         for y in 0..self.height as usize {
             let alpha = (y as f32 / self.height as f32) * PI;
             for x in 0..self.width as usize {
@@ -260,8 +287,10 @@ impl World {
                 let vb = mix_values(va, va * 0.02 + 0.49, va - (2.0 * vc - 1.0).max(0.0));
                 let vd = mix_values(vb, vc, 0.225 * v8);
 
-                self.terrain[y][x].altitude =
-                    Self::MIN_ALTITUDE + (vd * Self::ALTITUDE_SPAN);
+                // Shift to hit the planet's ocean fraction target.
+                let vd = (vd - ocean_shift).clamp(0.0, 1.0);
+
+                self.terrain[y][x].altitude = min_alt + (vd * span);
             }
         }
     }
@@ -277,6 +306,10 @@ impl World {
 
         let height = self.height as usize;
         let width = self.width as usize;
+        let max_altitude = self.planet.altitude_span().1;
+
+        // Scale rainfall by ocean fraction: more open liquid -> wetter atmosphere.
+        let rain_scale = (0.2 + self.planet.ocean_fraction * 1.3).clamp(0.1, 1.7);
 
         for y in 0..height {
             let alpha = (y as f32 / self.height as f32) * PI;
@@ -309,19 +342,18 @@ impl World {
                 let alt = self.terrain[y][x].altitude.max(0.0);
 
                 let alt_mod = (alt - oa1 * 0.7 - oa2 * 0.6 - oa3 * 0.5 - oa4 * 0.4 - oa5 * 0.5
-                    + Self::MAX_ALTITUDE * 0.18 * rn2
+                    + max_altitude * 0.18 * rn2
                     - alt * 0.25)
-                    / Self::MAX_ALTITUDE;
+                    / max_altitude;
 
                 let mut rv = mix_values(lat_mod1, alt_mod, 0.85);
                 rv = mix_values(rv.powi(2).copysign(rv), rv, 0.75);
 
-                let rainfall = ((rv * (Self::RAINFALL_SPAN + Self::RAINFALL_DRYNESS_OFFSET))
-                    + Self::MIN_RAINFALL
+                let rainfall = ((rv * (Self::MAX_RAINFALL + Self::RAINFALL_DRYNESS_OFFSET))
                     - Self::RAINFALL_DRYNESS_OFFSET)
-                    .clamp(0.0, Self::MAX_RAINFALL);
+                    * rain_scale;
 
-                self.terrain[y][x].rainfall = rainfall;
+                self.terrain[y][x].rainfall = rainfall.clamp(0.0, Self::MAX_RAINFALL);
             }
         }
     }
@@ -332,6 +364,14 @@ impl World {
         const R1: f32 = 2.0;
         const R2: f32 = 16.0;
 
+        let min_temp = self.planet.min_temperature();
+        let max_temp = self.planet.max_temperature();
+        let span = max_temp - min_temp;
+        let max_altitude = self.planet.altitude_span().1.max(1.0);
+        let greenhouse = self.planet.atmosphere.greenhouse();
+        // Tidal-locked & long-day worlds get a huge longitudinal swing.
+        let day_swing = (self.planet.day_length - 1.0).max(0.0) * 0.08;
+
         for y in 0..self.height as usize {
             let alpha = (y as f32 / self.height as f32) * PI;
             for x in 0..self.width as usize {
@@ -341,32 +381,88 @@ impl World {
                 let rn2 = Self::random_noise_from_polar(alpha, beta, R2, o2);
 
                 let lat_mod = alpha * 0.9 + (rn1 + rn2) * 0.05 * PI;
-                let alt_factor =
-                    (self.terrain[y][x].altitude / Self::MAX_ALTITUDE * Self::TEMPERATURE_ALTITUDE_FACTOR)
-                        .max(0.0);
+                let alt_factor = (self.terrain[y][x].altitude / max_altitude
+                    * Self::TEMPERATURE_ALTITUDE_FACTOR)
+                    .max(0.0);
 
-                let temperature =
-                    ((lat_mod.sin() - alt_factor) * Self::TEMPERATURE_SPAN + Self::MIN_TEMPERATURE)
-                        .clamp(Self::MIN_TEMPERATURE, Self::MAX_TEMPERATURE);
+                // Longitudinal day/night factor: peaks around beta = PI.
+                let day_factor = (beta - PI).cos() * day_swing;
 
-                self.terrain[y][x].temperature = temperature;
+                let mut temperature =
+                    ((lat_mod.sin() - alt_factor + day_factor) * span + min_temp) * 1.0;
+
+                // Greenhouse lifts the cold tail preferentially.
+                if greenhouse > 1.0 {
+                    let warming = (greenhouse - 1.0) * 10.0;
+                    temperature += warming * (1.0 - ((temperature - min_temp) / span).clamp(0.0, 1.0));
+                } else if greenhouse < 1.0 {
+                    let cooling = (1.0 - greenhouse) * 10.0;
+                    temperature -= cooling;
+                }
+
+                self.terrain[y][x].temperature = temperature.clamp(min_temp, max_temp);
             }
         }
     }
 
     fn generate_biomes(&mut self) {
+        let ocean_biome = match self.planet.solvent {
+            Solvent::Water => BiomeType::Ocean,
+            Solvent::Ammonia => BiomeType::AmmoniaOcean,
+            Solvent::Methane => BiomeType::MethaneLake,
+            Solvent::Sulfuric => BiomeType::SulfuricSea,
+            Solvent::None => BiomeType::SilicaDesert,
+        };
+
+        // Pre-filter eligible biomes for this planet.
+        let eligible: Vec<(BiomeType, BiomeStats)> = BiomeType::ALL
+            .iter()
+            .copied()
+            .map(|bt| (bt, biome_stats_for(bt, &self.planet)))
+            .filter(|(_, s)| s.requires.matches(&self.planet))
+            .collect();
+
         for y in 0..self.height as usize {
             for x in 0..self.width as usize {
                 let cell = &self.terrain[y][x];
                 let mut total = 0.0;
-                let mut presences = Vec::new();
+                let mut presences: Vec<(BiomeType, f32)> = Vec::new();
 
-                for biome_type in BiomeType::ALL {
-                    let stats: BiomeStats = (*biome_type).into();
-                    let presence = Self::biome_presence(cell, &stats);
-                    if presence > 0.0 {
-                        presences.push((*biome_type, presence));
-                        total += presence;
+                // Below sea level always gets the planet's ocean biome.
+                if cell.altitude <= 0.0 {
+                    presences.push((ocean_biome, 1.0));
+                    total = 1.0;
+                } else {
+                    for (biome_type, stats) in &eligible {
+                        // Oceans only on submerged tiles.
+                        if matches!(
+                            biome_type,
+                            BiomeType::Ocean
+                                | BiomeType::AmmoniaOcean
+                                | BiomeType::MethaneLake
+                                | BiomeType::SulfuricSea
+                        ) {
+                            continue;
+                        }
+                        let presence = Self::biome_presence(cell, stats);
+                        if presence > 0.0 {
+                            presences.push((*biome_type, presence));
+                            total += presence;
+                        }
+                    }
+                    // Fallback for worlds with very narrow climate envelopes:
+                    // if no biome matched, fall back to a generic "bare" land
+                    // biome based on temperature.
+                    if total <= 0.0 {
+                        let fallback = if cell.temperature > 40.0 {
+                            BiomeType::LavaField
+                        } else if cell.temperature < -25.0 {
+                            BiomeType::CryoPlain
+                        } else {
+                            BiomeType::SilicaDesert
+                        };
+                        presences.push((fallback, 1.0));
+                        total = 1.0;
                     }
                 }
 
@@ -383,7 +479,8 @@ impl World {
         if alt_diff < 0.0 {
             return 0.0;
         }
-        let alt_factor = alt_diff / (biome.max_altitude - biome.min_altitude);
+        let alt_range = (biome.max_altitude - biome.min_altitude).max(1.0);
+        let alt_factor = alt_diff / alt_range;
         if alt_factor > 1.0 {
             return 0.0;
         }
@@ -398,7 +495,8 @@ impl World {
         if rain_diff < 0.0 {
             return 0.0;
         }
-        let rain_factor = rain_diff / (biome.max_rainfall - biome.min_rainfall);
+        let rain_range = (biome.max_rainfall - biome.min_rainfall).max(1.0);
+        let rain_factor = rain_diff / rain_range;
         if rain_factor > 1.0 {
             return 0.0;
         }
@@ -412,7 +510,8 @@ impl World {
         if temp_diff < 0.0 {
             return 0.0;
         }
-        let temp_factor = temp_diff / (biome.max_temperature - biome.min_temperature);
+        let temp_range = (biome.max_temperature - biome.min_temperature).max(1.0);
+        let temp_factor = temp_diff / temp_range;
         if temp_factor > 1.0 {
             return 0.0;
         }
