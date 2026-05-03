@@ -16,6 +16,14 @@ pub enum Activity {
     Fleeing,
     Reproducing,
     Wandering,
+    SeekingMate,
+}
+
+/// Sex used for sexual reproduction. Assigned once at birth.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Sex {
+    Female,
+    Male,
 }
 
 /// An individual creature in the simulation.
@@ -25,6 +33,7 @@ pub struct Creature {
     pub species_id: u32,
     pub genome: Genome,
     pub phenotype: Phenotype,
+    pub sex: Sex,
 
     // Position
     pub x: usize,
@@ -65,12 +74,16 @@ impl Creature {
     ) -> Self {
         let phenotype = Phenotype::from_genome(&genome);
         let initial_energy = phenotype.fertility_threshold * 0.6;
+        let sex = if rng.gen_bool(0.5) { Sex::Female } else { Sex::Male };
+        // Juveniles can't breed until they grow up.
+        let initial_cooldown = phenotype.maturity_age.max(15);
 
         Self {
             id,
             species_id,
             genome,
             phenotype,
+            sex,
             x,
             y,
             sub_x: rng.gen_range(0.0..1.0),
@@ -80,13 +93,17 @@ impl Creature {
             health: 1.0,
             activity: Activity::Idle,
             alive: true,
-            reproduction_cooldown: 0,
+            reproduction_cooldown: initial_cooldown,
             target_x: None,
             target_y: None,
             kills: 0,
             children_produced: 0,
             generation,
         }
+    }
+
+    pub fn is_mature(&self) -> bool {
+        self.phenotype.is_mature(self.age)
     }
 
     /// Update creature for one tick. Returns energy change.
@@ -247,58 +264,81 @@ impl Creature {
     }
 
     /// Attempt to hunt and eat another creature.
-    pub fn hunt(&mut self, prey: &mut Creature, rng: &mut SmallRng) -> bool {
+    /// `hunter_pack_mul` and `prey_pack_mul` are combat multipliers
+    /// computed externally from local same-species adult counts.
+    pub fn hunt(
+        &mut self,
+        prey: &mut Creature,
+        hunter_pack_mul: f32,
+        prey_pack_mul: f32,
+        rng: &mut SmallRng,
+    ) -> bool {
         if !self.alive || !prey.alive {
             return false;
         }
 
-        // Can't hunt if not carnivorous enough
+        // Juveniles are clumsy hunters.
+        if !self.is_mature() {
+            return false;
+        }
+        // Can't hunt if not carnivorous enough.
         if self.phenotype.diet < 0.2 {
             return false;
         }
 
-        // Detection check: prey camouflage vs hunter sense
-        let detection_chance = self.phenotype.sense_range / 8.0 * (1.0 - prey.phenotype.camouflage * 0.7);
+        // Detection check: prey camouflage vs hunter sense.
+        let detection_chance = self.phenotype.sense_range / 8.0
+            * (1.0 - prey.phenotype.camouflage * 0.7);
         if !rng.gen_bool(detection_chance.clamp(0.1, 0.95) as f64) {
             return false;
         }
 
-        // Combat resolution
-        let hunter_power = self.phenotype.combat_power();
-        let prey_power = prey.phenotype.combat_power() * 0.6; // Defender disadvantage
+        // Combat: hunter power scales with maturity and pack.
+        let hunter_mat = if self.is_mature() { 1.0 } else { 0.5 };
+        let prey_mat = if prey.is_mature() { 1.0 } else { 0.5 };
+        let hunter_power = self.phenotype.combat_power() * hunter_pack_mul * hunter_mat;
+        // Defenders take a disadvantage but armour helps absorb the hit.
+        let armor_mul = 1.0 + prey.phenotype.armor * 1.2;
+        let prey_power =
+            prey.phenotype.combat_power() * 0.6 * prey_pack_mul * prey_mat * armor_mul;
 
         let success_chance = hunter_power / (hunter_power + prey_power);
         if rng.gen_bool(success_chance.clamp(0.05, 0.95) as f64) {
-            // Successful hunt
+            // Successful hunt — but venomous prey leaves a parting injury.
             let food = prey.phenotype.food_value() * self.phenotype.diet;
             self.energy += food;
             self.kills += 1;
             self.activity = Activity::Hunting;
 
+            if prey.phenotype.venom > 0.05 {
+                self.health -= prey.phenotype.venom * 0.3;
+                self.energy -= prey.phenotype.venom * 4.0;
+            }
             prey.alive = false;
             true
         } else {
-            // Failed hunt, both lose energy
+            // Failed hunt, both lose energy. Venom amplifies the
+            // counter-injury chance and damage.
             self.energy -= self.phenotype.movement_energy_cost() * 2.0;
             prey.energy -= prey.phenotype.movement_energy_cost();
-
-            // Prey might injure hunter
-            if rng.gen_bool(0.2) {
-                self.health -= 0.1;
+            let injure_chance = 0.2 + prey.phenotype.venom * 0.5;
+            if rng.gen_bool(injure_chance.clamp(0.0, 0.95) as f64) {
+                self.health -= 0.1 + prey.phenotype.venom * 0.15;
             }
             false
         }
     }
 
-    /// Check if the creature can reproduce.
+    /// Check if the creature can reproduce. Maturity is now a real gate.
     pub fn can_reproduce(&self) -> bool {
         self.alive
             && self.energy > self.phenotype.fertility_threshold
             && self.reproduction_cooldown == 0
-            && self.age > 10
+            && self.is_mature()
     }
 
-    /// Produce offspring with another creature.
+    /// Produce offspring with another creature. Sexual reproduction now
+    /// requires opposite sexes — same-sex pairs short-circuit out.
     pub fn reproduce(
         &mut self,
         partner: &mut Creature,
@@ -307,6 +347,9 @@ impl Creature {
         rng: &mut SmallRng,
     ) -> Vec<Creature> {
         if !self.can_reproduce() || !partner.can_reproduce() {
+            return Vec::new();
+        }
+        if self.sex == partner.sex {
             return Vec::new();
         }
 

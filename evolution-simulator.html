@@ -168,7 +168,7 @@ const CFG = {
   SPECIATION_INTERVAL: 50,
   SNAPSHOT_INTERVAL: 10,
   MAX_SNAPSHOTS: 500,
-  NUM_GENES: 18,
+  NUM_GENES: 22,
   MUTATION_RATE: 0.08,
   MUTATION_AMOUNT: 0.15,
   BLEND_CHANCE: 0.3,
@@ -181,7 +181,8 @@ const G = {
   COLD_TOL:4, HEAT_TOL:5, CAMOUFLAGE:6, AGGRESSION:7,
   LONGEVITY:8, FERTILITY:9, OFFSPRING:10, EFFICIENCY:11,
   WATER_NEED:12, LEG_STRENGTH:13,
-  RAD_TOL:14, TOX_TOL:15, PRESS_TOL:16, PHOTOSYN:17
+  RAD_TOL:14, TOX_TOL:15, PRESS_TOL:16, PHOTOSYN:17,
+  MATURITY:18, ARMOR:19, VENOM:20, PACK:21
 };
 
 const GENE_NAMES = [
@@ -189,7 +190,8 @@ const GENE_NAMES = [
   "Cold Tolerance","Heat Tolerance","Camouflage","Aggression",
   "Longevity","Fertility","Offspring Count","Efficiency",
   "Water Need","Leg Strength",
-  "Radiation Tolerance","Toxic Tolerance","Pressure Tolerance","Photosynthesis"
+  "Radiation Tolerance","Toxic Tolerance","Pressure Tolerance","Photosynthesis",
+  "Maturity Age","Armor","Venom","Pack Instinct"
 ];
 
 // ============================================================
@@ -523,9 +525,22 @@ function expressGene(genes) {
     radTol:       genes[G.RAD_TOL] || 0,
     toxTol:       genes[G.TOX_TOL] || 0,
     pressTol:     genes[G.PRESS_TOL] || 0,
-    photosyn:     genes[G.PHOTOSYN] || 0
+    photosyn:     genes[G.PHOTOSYN] || 0,
+    // Age in ticks at which this creature becomes a reproductive adult.
+    // Late-maturing animals invest more in growth and end up tougher.
+    maturityAge:  Math.round(5 + (genes[G.MATURITY] || 0) * 45),
+    armor:        genes[G.ARMOR] || 0,    // 0..1, reduces incoming damage
+    venom:        genes[G.VENOM] || 0,    // 0..1, hurts attackers
+    pack:         genes[G.PACK]  || 0     // 0..1, gain when grouped
   };
 }
+
+// Diet-based food preferences. Pure herbivores (diet<0.4) graze; pure
+// carnivores (diet>0.6) hunt; omnivores do both, prioritising whichever
+// is more abundant.
+function isHerbivore(p) { return p.diet < 0.4; }
+function isCarnivore(p) { return p.diet > 0.6; }
+function isMature(c)    { return c.age >= c.pheno.maturityAge; }
 
 function crossover(a, b, rng, mutationScale) {
   mutationScale = mutationScale || 1;
@@ -610,23 +625,35 @@ function generateSpeciesName(rng) {
 // ============================================================
 // CREATURE
 // ============================================================
+// Behavioural state — determines what the creature is currently trying
+// to do. Set each tick by chooseGoal(), used by movement & combat.
+const STATE = { WANDER:0, SEEK_FOOD:1, FLEE:2, SEEK_MATE:3 };
+
 class Creature {
-  constructor(x, y, genes, speciesId) {
+  constructor(x, y, genes, speciesId, sex) {
     this.x = x;
     this.y = y;
     this.genes = genes;
     this.pheno = expressGene(genes);
     this.speciesId = speciesId;
+    // Sex is binary and assigned at birth via a coin-flip; kept on the
+    // creature rather than the genome so siblings can be different sexes.
+    this.sex = (sex !== undefined) ? sex : (Math.random() < 0.5 ? 0 : 1);
     this.energy = this.pheno.fertility * 0.8;
     this.health = 1.0;
     this.age = 0;
     this.alive = true;
-    this.breedCooldown = 20;
+    // Juveniles need to grow up before they can breed.
+    this.breedCooldown = Math.max(20, this.pheno.maturityAge);
     this.targetX = x;
     this.targetY = y;
     this.moveTimer = 0;
+    this.state = STATE.WANDER;
+    this.lastAttackerId = -1; // for venom retaliation tracking
   }
 }
+// Symbol used in the UI for the creature's sex.
+function sexSymbol(s) { return s === 0 ? '♀' : '♂'; }
 
 // ============================================================
 // TILE ECOSYSTEM
@@ -701,7 +728,8 @@ class Simulation {
         const [tx, ty] = habitable[this.rng.int(0, habitable.length)];
         const genes = randomGenome(this.rng, base, 0.08);
         genes[G.DIET] = Math.min(0.30, genes[G.DIET]);
-        const cr = new Creature(tx, ty, genes, sp.id);
+        // Founders are sex-balanced 50/50 by RNG.
+        const cr = new Creature(tx, ty, genes, sp.id, this.rng.chance(0.5) ? 0 : 1);
         this.creatures.push(cr);
         sp.population++;
         sp.totalBorn++;
@@ -726,7 +754,8 @@ class Simulation {
         const [tx, ty] = habitable[this.rng.int(0, habitable.length)];
         const genes = randomGenome(this.rng, base, 0.08);
         genes[G.DIET] = Math.max(0.70, genes[G.DIET]);
-        const cr = new Creature(tx, ty, genes, sp.id);
+        // Founders are sex-balanced 50/50 by RNG.
+        const cr = new Creature(tx, ty, genes, sp.id, this.rng.chance(0.5) ? 0 : 1);
         this.creatures.push(cr);
         sp.population++;
         sp.totalBorn++;
@@ -745,6 +774,170 @@ class Simulation {
     }
   }
 
+  /// Wrap-aware horizontal delta. Returns the shorter of the two paths
+  /// around the cylindrical world.
+  wrapDX(a, b) {
+    let d = a - b;
+    if (d > CFG.W / 2) d -= CFG.W;
+    else if (d < -CFG.W / 2) d += CFG.W;
+    return d;
+  }
+
+  /// Find the most attractive food tile within sense range. Score balances
+  /// plant biomass (for herbivores), prey biomass (for carnivores) and
+  /// distance. Returns [x, y] or null.
+  findNearestFood(c) {
+    const ph = c.pheno;
+    const wantPlant = !isCarnivore(ph);
+    const wantMeat = !isHerbivore(ph);
+    const sr = Math.min(8, Math.ceil(ph.senseRange));
+    let best = null, bestScore = 0.5;
+    for (let dy = -sr; dy <= sr; dy++) {
+      const ny = c.y + dy;
+      if (ny < 0 || ny >= CFG.H) continue;
+      for (let dx = -sr; dx <= sr; dx++) {
+        const nx = (c.x + dx + CFG.W) % CFG.W;
+        const idx = ny * CFG.W + nx;
+        let score = 0;
+        if (wantPlant) score += this.ecosystem[idx].plantBiomass * (wantMeat ? 0.4 : 1.0);
+        if (wantMeat && this.spatialGrid) {
+          const cell = this.spatialGrid.get(idx);
+          if (cell) for (const oi of cell) {
+            const o = this.creatures[oi];
+            if (!o.alive || o === c) continue;
+            // Hunters target prey at most 1.5x their size.
+            if (o.pheno.bodySize <= ph.bodySize * 1.5) {
+              score += o.pheno.bodySize * (wantPlant ? 2 : 6);
+            }
+          }
+        }
+        const dist = Math.abs(dx) + Math.abs(dy);
+        score -= dist * 0.4;
+        if (score > bestScore) { bestScore = score; best = [nx, ny]; }
+      }
+    }
+    return best;
+  }
+
+  /// Find the nearest carnivorous threat within sense range. Returns the
+  /// threat's tile so callers can flee away from it.
+  findNearestThreat(c) {
+    if (!this.spatialGrid) return null;
+    const sr = Math.min(8, Math.ceil(c.pheno.senseRange));
+    let nearest = null, bestDist = Infinity;
+    for (let dy = -sr; dy <= sr; dy++) {
+      const ny = c.y + dy;
+      if (ny < 0 || ny >= CFG.H) continue;
+      for (let dx = -sr; dx <= sr; dx++) {
+        const nx = (c.x + dx + CFG.W) % CFG.W;
+        const cell = this.spatialGrid.get(ny * CFG.W + nx);
+        if (!cell) continue;
+        for (const oi of cell) {
+          const o = this.creatures[oi];
+          if (!o.alive || o === c) continue;
+          if (o.speciesId === c.speciesId) continue;
+          if (!isCarnivore(o.pheno)) continue;
+          if (o.pheno.bodySize < c.pheno.bodySize * 1.1) continue;
+          if (!isMature(o)) continue;
+          const dist = Math.abs(dx) + Math.abs(dy);
+          // Camouflage reduces effective detection.
+          const detection = 1 - o.pheno.camouflage * 0.6;
+          if (dist < bestDist && Math.random() < detection) {
+            bestDist = dist;
+            nearest = [nx, ny];
+          }
+        }
+      }
+    }
+    return nearest;
+  }
+
+  /// Find a same-species, opposite-sex, breeding-ready partner in range.
+  findNearestMate(c) {
+    if (!this.spatialGrid) return null;
+    const sr = Math.min(8, Math.ceil(c.pheno.senseRange));
+    let nearest = null, bestDist = Infinity;
+    for (let dy = -sr; dy <= sr; dy++) {
+      const ny = c.y + dy;
+      if (ny < 0 || ny >= CFG.H) continue;
+      for (let dx = -sr; dx <= sr; dx++) {
+        const nx = (c.x + dx + CFG.W) % CFG.W;
+        const cell = this.spatialGrid.get(ny * CFG.W + nx);
+        if (!cell) continue;
+        for (const oi of cell) {
+          const o = this.creatures[oi];
+          if (!o.alive || o === c) continue;
+          if (o.speciesId !== c.speciesId) continue;
+          if (o.sex === c.sex) continue;
+          if (!isMature(o) || o.breedCooldown > 0) continue;
+          if (o.energy < o.pheno.fertility * 0.7) continue;
+          const dist = Math.abs(dx) + Math.abs(dy);
+          if (dist < bestDist) { bestDist = dist; nearest = [nx, ny]; }
+        }
+      }
+    }
+    return nearest;
+  }
+
+  /// Combat multiplier from same-species adults on the same and
+  /// orthogonally-adjacent tiles. A creature with no pack instinct gets
+  /// no benefit; gregarious creatures gain up to ~1.5x when surrounded.
+  packBonus(c, x, y) {
+    if (!this.spatialGrid || c.pheno.pack < 0.05) return 1;
+    const offs = [[0,0],[1,0],[-1,0],[0,1],[0,-1]];
+    let allies = 0;
+    for (const [ox, oy] of offs) {
+      const nx = (x + ox + CFG.W) % CFG.W;
+      const ny = y + oy;
+      if (ny < 0 || ny >= CFG.H) continue;
+      const cell = this.spatialGrid.get(ny * CFG.W + nx);
+      if (!cell) continue;
+      for (const oi of cell) {
+        const o = this.creatures[oi];
+        if (!o.alive || o === c) continue;
+        if (o.speciesId === c.speciesId && isMature(o)) allies++;
+      }
+    }
+    return 1 + Math.min(allies, 4) * 0.12 * c.pheno.pack;
+  }
+
+  /// Pick a movement target based on the creature's internal state.
+  chooseGoal(c) {
+    const ph = c.pheno;
+    const sr = Math.min(8, Math.ceil(ph.senseRange));
+    // 1) Flee — non-carnivores prioritise running from larger predators.
+    if (!isCarnivore(ph)) {
+      const threat = this.findNearestThreat(c);
+      if (threat) {
+        const tdx = this.wrapDX(c.x, threat[0]);
+        const tdy = c.y - threat[1];
+        c.targetX = (c.x + Math.sign(tdx) * sr + CFG.W) % CFG.W;
+        c.targetY = Math.max(0, Math.min(CFG.H - 1, c.y + Math.sign(tdy) * sr));
+        c.state = STATE.FLEE;
+        return;
+      }
+    }
+    // 2) Hungry — energy below 50% of breeding threshold means actively forage.
+    const hungry = c.energy < ph.fertility * 0.5;
+    if (hungry) {
+      const food = this.findNearestFood(c);
+      if (food) { c.targetX = food[0]; c.targetY = food[1]; c.state = STATE.SEEK_FOOD; return; }
+    }
+    // 3) Reproductive — well-fed adults seek mates of their species.
+    if (isMature(c) && c.breedCooldown === 0 && c.energy > ph.fertility) {
+      const mate = this.findNearestMate(c);
+      if (mate) { c.targetX = mate[0]; c.targetY = mate[1]; c.state = STATE.SEEK_MATE; return; }
+    }
+    // 4) Default: explore. Bias drift toward food if mildly peckish.
+    if (c.energy < ph.fertility * 0.85) {
+      const food = this.findNearestFood(c);
+      if (food) { c.targetX = food[0]; c.targetY = food[1]; c.state = STATE.SEEK_FOOD; return; }
+    }
+    c.targetX = (c.x + this.rng.int(-sr, sr + 1) + CFG.W) % CFG.W;
+    c.targetY = Math.max(0, Math.min(CFG.H - 1, c.y + this.rng.int(-sr, sr + 1)));
+    c.state = STATE.WANDER;
+  }
+
   step() {
     this.tick++;
 
@@ -752,13 +945,13 @@ class Simulation {
     for (const c of this.creatures) {
       if (!c.alive) continue;
 
-      // Choose direction
+      // Choose direction — goal-driven, replanned every few ticks. Fleeing
+      // creatures replan more often so they actually evade rather than
+      // stubbornly march into the predator they were running from.
       c.moveTimer--;
       if (c.moveTimer <= 0) {
-        const sr = Math.ceil(c.pheno.senseRange);
-        c.targetX = (c.x + this.rng.int(-sr, sr + 1) + CFG.W) % CFG.W;
-        c.targetY = Math.max(0, Math.min(CFG.H - 1, c.y + this.rng.int(-sr, sr + 1)));
-        c.moveTimer = 3;
+        this.chooseGoal(c);
+        c.moveTimer = (c.state === STATE.FLEE) ? 1 : 3;
       }
 
       // Move toward target
@@ -886,7 +1079,7 @@ class Simulation {
       }
 
       // Carnivore hunting
-      if (c.pheno.diet > 0.2 && c.pheno.aggression > 0.2) {
+      if (c.pheno.diet > 0.2 && c.pheno.aggression > 0.2 && isMature(c)) {
         const key = c.y * CFG.W + c.x;
         const tileCreatures = this.spatialGrid.get(key);
         if (tileCreatures && tileCreatures.length > 1) {
@@ -894,23 +1087,42 @@ class Simulation {
           const preyIdx = tileCreatures[this.rng.int(0, tileCreatures.length)];
           const prey = this.creatures[preyIdx];
           if (prey !== c && prey.alive && prey.pheno.bodySize < c.pheno.bodySize * 1.5) {
-            // Detection check
+            // Detection check — camouflage and prey's pack-mates obscure it.
             const detectChance = (c.pheno.senseRange / 8.0) * (1 - prey.pheno.camouflage * 0.7);
             if (this.rng.chance(detectChance)) {
-              // Combat
-              const hunterPower = c.pheno.bodySize * c.pheno.speed * 0.5 + c.pheno.aggression * 2.0;
-              const preyPower = (prey.pheno.bodySize * prey.pheno.speed * 0.5 + prey.pheno.aggression * 2.0) * 0.6;
+              // Pack bonus: count same-species adults around hunter and prey
+              // and inflate their combat power. Hunting in a pack works,
+              // and prey defended by a herd is much harder to kill.
+              const hunterPack = this.packBonus(c, c.x, c.y);
+              const preyPack   = this.packBonus(prey, prey.x, prey.y);
+              // Juveniles fight worse than their adult selves.
+              const hunterMatMul = isMature(c)    ? 1 : 0.5;
+              const preyMatMul   = isMature(prey) ? 1 : 0.5;
+              const hunterPower = (c.pheno.bodySize * c.pheno.speed * 0.5
+                + c.pheno.aggression * 2.0) * hunterPack * hunterMatMul;
+              // Prey gets a defender disadvantage but armour helps.
+              const preyArmor = 1 + prey.pheno.armor * 1.2;
+              const preyPower = ((prey.pheno.bodySize * prey.pheno.speed * 0.5
+                + prey.pheno.aggression * 2.0) * 0.6 * preyPack * preyMatMul) * preyArmor;
               const successChance = hunterPower / (hunterPower + preyPower);
               if (this.rng.chance(successChance)) {
-                // Kill
+                // Kill — hunter's reward scales with diet, but venom in
+                // prey leaves a parting injury.
                 const foodValue = prey.pheno.bodySize * 12.0;
                 c.energy += foodValue * c.pheno.diet;
                 prey.alive = false;
+                if (prey.pheno.venom > 0.05) {
+                  c.health -= prey.pheno.venom * 0.3;
+                  c.energy -= prey.pheno.venom * 4.0;
+                }
               } else {
-                // Failed hunt
+                // Failed hunt: both bleed, and venomous prey hit back hard.
                 c.energy -= 2.0;
                 prey.energy -= 1.0;
-                if (this.rng.chance(0.2)) c.health -= 0.05; // counter injury
+                if (this.rng.chance(0.2 + prey.pheno.venom * 0.5)) {
+                  c.health -= 0.05 + prey.pheno.venom * 0.15;
+                }
+                prey.lastAttackerId = c.speciesId;
               }
             }
           }
@@ -918,11 +1130,13 @@ class Simulation {
       }
     }
 
-    // Phase 3: Reproduction
+    // Phase 3: Reproduction. Sexual reproduction now requires both
+    // partners to be mature, opposite-sex, on the same tile, with energy
+    // above their personal fertility threshold and cooldown elapsed.
     const newCreatures = [];
     for (let i = 0; i < this.creatures.length && this.creatures.length + newCreatures.length < CFG.MAX_CREATURES; i++) {
       const c = this.creatures[i];
-      if (!c.alive || c.age < 10 || c.breedCooldown > 0 || c.energy < c.pheno.fertility) continue;
+      if (!c.alive || !isMature(c) || c.breedCooldown > 0 || c.energy < c.pheno.fertility) continue;
 
       // Find mate on same tile
       const key = c.y * CFG.W + c.x;
@@ -932,11 +1146,12 @@ class Simulation {
       let mate = null;
       for (const idx of tileCreatures) {
         const m = this.creatures[idx];
-        if (m !== c && m.alive && m.speciesId === c.speciesId &&
-            m.age > 10 && m.breedCooldown <= 0 && m.energy > m.pheno.fertility) {
-          mate = m;
-          break;
-        }
+        if (m === c || !m.alive) continue;
+        if (m.speciesId !== c.speciesId) continue;
+        if (m.sex === c.sex) continue; // sexual reproduction needs both sexes
+        if (!isMature(m) || m.breedCooldown > 0 || m.energy < m.pheno.fertility) continue;
+        mate = m;
+        break;
       }
       if (!mate) continue;
 
@@ -945,7 +1160,9 @@ class Simulation {
 
       for (let o = 0; o < avgOffspring && this.creatures.length + newCreatures.length < CFG.MAX_CREATURES; o++) {
         const childGenes = crossover(c.genes, mate.genes, this.rng, this.planet.mutation);
-        const child = new Creature(c.x, c.y, childGenes, c.speciesId);
+        // Random sex per offspring; siblings can be different sexes.
+        const child = new Creature(c.x, c.y, childGenes, c.speciesId,
+          this.rng.chance(0.5) ? 0 : 1);
         child.energy = costPer * 0.8;
         newCreatures.push(child);
 
@@ -1690,15 +1907,22 @@ class App {
     `;
     if (info.creatures.length > 0) {
       html += `<hr style="border-color:#0f3460;margin:8px 0">`;
+      const stateName = ['Wander','Forage','Flee','Mate'];
       for (const c of info.creatures.slice(0, 8)) {
         const sp = this.sim.speciesMap.get(c.speciesId);
         const spName = sp ? sp.name : '?';
         const spCol = sp ? `rgb(${sp.color.join(',')})` : '#fff';
+        const stage = isMature(c) ? 'Adult' : 'Juvenile';
+        const def = [];
+        if (c.pheno.armor > 0.4) def.push(`Armor ${(c.pheno.armor*100).toFixed(0)}%`);
+        if (c.pheno.venom > 0.4) def.push(`Venom ${(c.pheno.venom*100).toFixed(0)}%`);
+        if (c.pheno.pack  > 0.4) def.push(`Pack ${(c.pheno.pack*100).toFixed(0)}%`);
         html += `<div class="species-card" style="border-left:3px solid ${spCol}">
-          <div class="name" style="color:${spCol}">${spName}</div>
+          <div class="name" style="color:${spCol}">${sexSymbol(c.sex)} ${spName}</div>
           <div class="stats">
-            ${dietLabel(c.pheno.diet)} | Size: ${c.pheno.bodySize.toFixed(1)} | Age: ${c.age}/${Math.round(c.pheno.maxAge)}<br>
-            Energy: ${c.energy.toFixed(1)} | Health: ${(c.health * 100).toFixed(0)}%
+            ${dietLabel(c.pheno.diet)} ${stage} | Size: ${c.pheno.bodySize.toFixed(1)} | Age: ${c.age}/${Math.round(c.pheno.maxAge)}<br>
+            Energy: ${c.energy.toFixed(1)} | Health: ${(c.health * 100).toFixed(0)}% | ${stateName[c.state || 0]}
+            ${def.length ? '<br>' + def.join(' &middot; ') : ''}
           </div>
         </div>`;
       }

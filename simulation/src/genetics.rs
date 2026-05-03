@@ -3,7 +3,7 @@ use rand::{rngs::SmallRng, Rng};
 use serde::{Deserialize, Serialize};
 
 /// Number of genes in the genome.
-pub const GENE_COUNT: usize = 18;
+pub const GENE_COUNT: usize = 22;
 
 /// Gene indices for readability.
 pub mod gene {
@@ -27,6 +27,11 @@ pub mod gene {
     pub const PRESSURE_TOLERANCE: usize = 16;
     /// Fraction of energy budget derived from sunlight via photosynthesis.
     pub const PHOTOSYNTHESIS: usize = 17;
+    // Behavioural / morphological traits
+    pub const MATURITY: usize = 18;
+    pub const ARMOR: usize = 19;
+    pub const VENOM: usize = 20;
+    pub const PACK_INSTINCT: usize = 21;
 }
 
 pub const GENE_NAMES: [&str; GENE_COUNT] = [
@@ -48,6 +53,10 @@ pub const GENE_NAMES: [&str; GENE_COUNT] = [
     "Toxic Tolerance",
     "Pressure Tolerance",
     "Photosynthesis",
+    "Maturity Age",
+    "Armor",
+    "Venom",
+    "Pack Instinct",
 ];
 
 /// A genome is a fixed-size array of gene values in [0.0, 1.0].
@@ -214,6 +223,15 @@ pub struct Phenotype {
     pub pressure_tolerance: f32,
     /// Autotrophic fraction: 0.0 = fully heterotrophic, 1.0 = near-plant.
     pub photosynthesis: f32,
+    /// Age in ticks at which this creature becomes a reproductive adult.
+    pub maturity_age: u32,
+    /// Defensive armour: reduces damage taken in combat.
+    pub armor: f32,
+    /// Venom: hurts attackers on hit, even posthumously.
+    pub venom: f32,
+    /// Pack instinct: combat / efficiency boost when surrounded by
+    /// same-species adults.
+    pub pack_instinct: f32,
 }
 
 impl Phenotype {
@@ -240,7 +258,16 @@ impl Phenotype {
             toxic_tolerance: g[gene::TOXIC_TOLERANCE],
             pressure_tolerance: g[gene::PRESSURE_TOLERANCE],
             photosynthesis: g[gene::PHOTOSYNTHESIS],
+            maturity_age: 5 + (g[gene::MATURITY] * 45.0) as u32,
+            armor: g[gene::ARMOR],
+            venom: g[gene::VENOM],
+            pack_instinct: g[gene::PACK_INSTINCT],
         }
+    }
+
+    /// Whether this creature is sexually mature.
+    pub fn is_mature(&self, age: u32) -> bool {
+        age >= self.maturity_age
     }
 
     /// Check if this creature can survive in the given temperature.

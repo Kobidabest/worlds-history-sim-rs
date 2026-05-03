@@ -183,6 +183,43 @@ impl Simulation {
         }
     }
 
+    /// Compute the combat multiplier from same-species adults on the same
+    /// and orthogonally-adjacent tiles. A creature with no pack instinct
+    /// gets no benefit; gregarious species gain up to ~1.5x when grouped.
+    fn pack_bonus(&self, idx: usize) -> f32 {
+        let c = &self.creatures[idx];
+        if c.phenotype.pack_instinct < 0.05 {
+            return 1.0;
+        }
+        let w = self.config.world_width as i32;
+        let h = self.config.world_height as i32;
+        let cx = c.x as i32;
+        let cy = c.y as i32;
+        let mut allies = 0u32;
+        for (ox, oy) in [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)] {
+            let nx = cx + ox;
+            let ny = cy + oy;
+            if ny < 0 || ny >= h {
+                continue;
+            }
+            let nx = ((nx % w) + w) % w;
+            let key = (ny as usize, nx as usize);
+            if let Some(here) = self.spatial_index.get(&key) {
+                for &oi in here {
+                    if oi == idx {
+                        continue;
+                    }
+                    let o = &self.creatures[oi];
+                    if !o.alive || o.species_id != c.species_id || !o.is_mature() {
+                        continue;
+                    }
+                    allies += 1;
+                }
+            }
+        }
+        1.0 + (allies.min(4) as f32) * 0.12 * c.phenotype.pack_instinct
+    }
+
     /// Run one simulation tick.
     pub fn tick(&mut self) {
         self.tick += 1;
@@ -269,7 +306,9 @@ impl Simulation {
             }
         }
 
-        // Carnivore hunting
+        // Carnivore hunting. Pack bonuses for both attacker and defender are
+        // computed up-front from the spatial index so we don't try to
+        // double-borrow mid-loop.
         let spatial_clone = self.spatial_index.clone();
         for i in 0..self.creatures.len() {
             if !self.creatures[i].alive || self.creatures[i].phenotype.diet < 0.2 {
@@ -288,6 +327,9 @@ impl Simulation {
                     if self.creatures[prey_idx].phenotype.body_size
                         < self.creatures[i].phenotype.body_size * 1.5
                     {
+                        let hunter_pack = self.pack_bonus(i);
+                        let prey_pack = self.pack_bonus(prey_idx);
+
                         // Split borrows manually using indices
                         let (hunter, prey) = if i < prey_idx {
                             let (left, right) = self.creatures.split_at_mut(prey_idx);
@@ -297,7 +339,7 @@ impl Simulation {
                             (&mut right[0], &mut left[prey_idx])
                         };
 
-                        if hunter.hunt(prey, &mut self.rng) {
+                        if hunter.hunt(prey, hunter_pack, prey_pack, &mut self.rng) {
                             break; // One kill per tick
                         }
                     }
@@ -329,6 +371,10 @@ impl Simulation {
 
                     // Must be same species (or close enough genetically)
                     if self.creatures[i].species_id != self.creatures[partner_idx].species_id {
+                        continue;
+                    }
+                    // And opposite sex — sexual reproduction needs both.
+                    if self.creatures[i].sex == self.creatures[partner_idx].sex {
                         continue;
                     }
 
@@ -606,6 +652,8 @@ impl Simulation {
                     "species": species_name,
                     "species_id": c.species_id,
                     "age": c.age,
+                    "sex": match c.sex { crate::creature::Sex::Female => "F", crate::creature::Sex::Male => "M" },
+                    "stage": if c.is_mature() { "Adult" } else { "Juvenile" },
                     "energy": format!("{:.1}", c.energy),
                     "health": format!("{:.2}", c.health),
                     "size": format!("{:.1}", c.phenotype.body_size),
@@ -615,6 +663,10 @@ impl Simulation {
                     "cold_tol": format!("{:.1}", c.phenotype.cold_tolerance),
                     "heat_tol": format!("{:.1}", c.phenotype.heat_tolerance),
                     "camouflage": format!("{:.2}", c.phenotype.camouflage),
+                    "armor": format!("{:.2}", c.phenotype.armor),
+                    "venom": format!("{:.2}", c.phenotype.venom),
+                    "pack": format!("{:.2}", c.phenotype.pack_instinct),
+                    "maturity_age": c.phenotype.maturity_age,
                     "generation": c.generation,
                     "kills": c.kills,
                     "children": c.children_produced,
@@ -676,6 +728,46 @@ mod tests {
             // Cheap sanity: JSON API stays valid.
             let _ = sim.get_stats_json();
         }
+    }
+
+    /// Same-sex creatures must not be able to reproduce — sexual
+    /// reproduction is the whole point of having a Sex field.
+    #[test]
+    fn same_sex_pairs_cannot_reproduce() {
+        use crate::creature::{Creature, Sex};
+        use crate::genetics::Genome;
+        use rand::{rngs::SmallRng, SeedableRng};
+        let mut rng = SmallRng::seed_from_u64(1);
+        let g = Genome::random(&mut rng);
+        let mut a = Creature::new(1, 1, g.clone(), 0, 0, 0, &mut rng);
+        let mut b = Creature::new(2, 1, g, 0, 0, 0, &mut rng);
+        a.sex = Sex::Female;
+        b.sex = Sex::Female;
+        // Force ripe & adult so the only blocker is the sex check.
+        a.age = 1000; b.age = 1000;
+        a.energy = 1000.0; b.energy = 1000.0;
+        a.reproduction_cooldown = 0; b.reproduction_cooldown = 0;
+        let kids = a.reproduce(&mut b, 100, 1.0, &mut rng);
+        assert!(kids.is_empty(), "same-sex pair must not reproduce");
+    }
+
+    /// A juvenile cannot reproduce no matter how much energy it has.
+    #[test]
+    fn juveniles_cannot_reproduce() {
+        use crate::creature::{Creature, Sex};
+        use crate::genetics::Genome;
+        use rand::{rngs::SmallRng, SeedableRng};
+        let mut rng = SmallRng::seed_from_u64(2);
+        let g = Genome::random(&mut rng);
+        let mut a = Creature::new(1, 1, g.clone(), 0, 0, 0, &mut rng);
+        let mut b = Creature::new(2, 1, g, 0, 0, 0, &mut rng);
+        a.sex = Sex::Female;
+        b.sex = Sex::Male;
+        a.age = 0; b.age = 0;
+        a.energy = 1000.0; b.energy = 1000.0;
+        a.reproduction_cooldown = 0; b.reproduction_cooldown = 0;
+        let kids = a.reproduce(&mut b, 100, 1.0, &mut rng);
+        assert!(kids.is_empty(), "juveniles must not reproduce");
     }
 
     /// A hostile world should exert meaningful selection pressure — we
