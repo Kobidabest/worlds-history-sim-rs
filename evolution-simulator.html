@@ -6,13 +6,13 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>Evolution Ecosystem Simulator</title>
 <style>
-*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html,body{width:100%;height:100%;overflow:hidden;background:#1a1a2e;color:#e0e0e0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;font-size:14px;touch-action:none}
-#app{display:flex;flex-direction:column;height:100%}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+html,body{width:100%;height:100%;overflow:hidden;background:#1a1a2e;color:#e0e0e0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;font-size:14px;touch-action:none;overscroll-behavior:none}
+#app{display:flex;flex-direction:column;height:100%;padding-top:env(safe-area-inset-top);padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right);padding-bottom:env(safe-area-inset-bottom)}
 #toolbar{display:flex;align-items:center;gap:8px;padding:6px 10px;background:#16213e;border-bottom:1px solid #0f3460;flex-shrink:0;flex-wrap:wrap;z-index:10}
-#toolbar button{padding:6px 14px;border:1px solid #0f3460;background:#1a1a2e;color:#e0e0e0;border-radius:6px;font-size:13px;cursor:pointer;white-space:nowrap}
+#toolbar button{padding:8px 14px;min-height:36px;border:1px solid #0f3460;background:#1a1a2e;color:#e0e0e0;border-radius:6px;font-size:13px;cursor:pointer;white-space:nowrap;touch-action:manipulation}
 #toolbar button:active,#toolbar button.active{background:#0f3460;border-color:#e94560}
-#toolbar select{padding:5px 8px;border:1px solid #0f3460;background:#1a1a2e;color:#e0e0e0;border-radius:6px;font-size:13px}
+#toolbar select{padding:7px 8px;min-height:36px;border:1px solid #0f3460;background:#1a1a2e;color:#e0e0e0;border-radius:6px;font-size:13px;touch-action:manipulation}
 #toolbar .sep{width:1px;height:24px;background:#0f3460;flex-shrink:0}
 #toolbar label{font-size:12px;color:#a0a0c0}
 #toolbar span.stat{font-size:12px;color:#e94560;font-weight:600}
@@ -49,16 +49,42 @@ canvas{display:block;image-rendering:pixelated}
 #loading .bar-outer{width:260px;height:8px;background:#0f3460;border-radius:4px;overflow:hidden}
 #loading .bar-inner{height:100%;background:#e94560;border-radius:4px;transition:width .3s}
 #loading p{margin-top:8px;color:#a0a0c0;font-size:13px}
+#sidebar-toggle{min-width:28px;min-height:48px}
+#sidebar-backdrop{position:absolute;inset:0;background:rgba(10,10,20,0.55);z-index:15;display:none}
+#sidebar-backdrop.show{display:block}
 @media(max-width:768px){
   #sidebar{width:280px}
   #sidebar-toggle{right:280px}
   #sidebar-toggle.collapsed{right:0}
 }
 @media(max-width:600px){
-  #sidebar{position:absolute;right:0;top:0;bottom:0;z-index:20;width:300px}
+  #sidebar{position:absolute;right:0;top:0;bottom:0;z-index:20;width:min(85vw,320px)}
   #sidebar.collapsed{width:0}
-  #sidebar-toggle{right:300px;z-index:21}
+  #sidebar-toggle{right:min(85vw,320px);z-index:21;padding:12px 6px}
   #sidebar-toggle.collapsed{right:0}
+  #toolbar{gap:6px;padding:5px 8px}
+  #toolbar button{padding:8px 10px;font-size:12px}
+  #toolbar select{padding:7px 6px;font-size:12px;max-width:42vw}
+  /* Drop auxiliary labels on small screens; the selects next to them make
+     their meaning obvious. */
+  #toolbar label[data-compact-hide]{display:none}
+  #toolbar .sep{height:20px}
+  /* Shrink decorative separators when wrapping gets crowded. */
+  #tab-bar button{padding:10px 4px;font-size:11px}
+  #speed-slider{width:70px}
+}
+@media(max-width:400px){
+  #toolbar{gap:4px;padding:4px 6px}
+  #toolbar button{padding:8px;font-size:12px}
+  #toolbar span.stat{font-size:11px}
+  #sidebar{width:min(92vw,320px)}
+  #sidebar-toggle{right:min(92vw,320px)}
+  #tab-bar button{padding:10px 2px;font-size:10px}
+}
+@media(orientation:landscape) and (max-height:480px){
+  #toolbar{padding:3px 8px;gap:6px}
+  #toolbar button{padding:6px 10px;min-height:30px;font-size:12px}
+  #toolbar select{padding:5px 6px;min-height:30px;font-size:12px}
 }
 </style>
 </head>
@@ -72,33 +98,34 @@ canvas{display:block;image-rendering:pixelated}
   <div id="toolbar">
     <button id="btn-pause">Pause</button>
     <div class="sep"></div>
-    <label>Speed</label>
-    <input type="range" id="speed-slider" min="1" max="20" value="3">
+    <label data-compact-hide>Speed</label>
+    <input type="range" id="speed-slider" min="1" max="20" value="3" aria-label="Simulation speed">
     <div class="sep"></div>
-    <label>View</label>
-    <select id="view-select">
+    <label data-compact-hide>View</label>
+    <select id="view-select" aria-label="View mode">
       <option value="biome">Biomes</option>
       <option value="altitude">Altitude</option>
       <option value="temperature">Temperature</option>
       <option value="rainfall">Rainfall</option>
     </select>
     <div class="sep"></div>
-    <button id="btn-creatures" class="active">Show Creatures</button>
+    <button id="btn-creatures" class="active" aria-label="Toggle creature rendering">Creatures</button>
     <div class="sep"></div>
-    <label>Planet</label>
-    <select id="planet-select"></select>
+    <label data-compact-hide>Planet</label>
+    <select id="planet-select" aria-label="Planet preset"></select>
     <div class="sep"></div>
-    <span class="stat">Tick: <span id="stat-tick">0</span></span>
-    <span class="stat">Pop: <span id="stat-pop">0</span></span>
-    <span class="stat">Species: <span id="stat-species">0</span></span>
+    <span class="stat">T:<span id="stat-tick">0</span></span>
+    <span class="stat">Pop:<span id="stat-pop">0</span></span>
+    <span class="stat">Sp:<span id="stat-species">0</span></span>
     <div class="sep"></div>
-    <button id="btn-new">New World</button>
+    <button id="btn-new">New</button>
   </div>
   <div id="main-area">
     <div id="canvas-wrap">
       <canvas id="world-canvas"></canvas>
     </div>
-    <button id="sidebar-toggle">&lsaquo;</button>
+    <div id="sidebar-backdrop"></div>
+    <button id="sidebar-toggle" aria-label="Toggle sidebar">&lsaquo;</button>
     <div id="sidebar">
       <div id="tab-bar">
         <button class="active" data-tab="species-tab">Species</button>
@@ -1080,10 +1107,18 @@ class Renderer {
 
   resize() {
     const wrap = this.canvas.parentElement;
-    this.canvas.width = wrap.clientWidth;
-    this.canvas.height = wrap.clientHeight;
+    const cw = wrap.clientWidth;
+    const ch = wrap.clientHeight;
+    // Back the canvas at device-pixel resolution so the map stays crisp
+    // on mobile and Retina displays while the CSS box keeps its size.
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    this.dpr = dpr;
+    this.canvas.style.width = cw + 'px';
+    this.canvas.style.height = ch + 'px';
+    this.canvas.width = Math.max(1, Math.round(cw * dpr));
+    this.canvas.height = Math.max(1, Math.round(ch * dpr));
 
-    // Fit world to screen
+    // Fit world to screen (all sizing in backing-store pixels).
     const sx = this.canvas.width / (CFG.W * this.tileSize);
     const sy = this.canvas.height / (CFG.H * this.tileSize);
     this.scale = Math.min(sx, sy);
@@ -1194,6 +1229,11 @@ class Renderer {
   }
 
   screenToTile(sx, sy) {
+    // Incoming coords are CSS pixels from getBoundingClientRect(); convert
+    // to backing-store pixels before reversing the canvas transform.
+    const dpr = this.dpr || 1;
+    sx *= dpr;
+    sy *= dpr;
     const tx = Math.floor((sx - this.offsetX) / (this.scale * this.tileSize));
     const ty = Math.floor((sy - this.offsetY) / (this.scale * this.tileSize));
     if (tx >= 0 && tx < CFG.W && ty >= 0 && ty < CFG.H) return [tx, ty];
@@ -1366,14 +1406,27 @@ class App {
       this.renderer.terrainDirty = true;
     });
 
-    // Sidebar toggle
+    // Sidebar toggle (+ mobile backdrop).
     const sidebarToggle = document.getElementById('sidebar-toggle');
-    sidebarToggle.addEventListener('click', () => {
-      this.sidebarCollapsed = !this.sidebarCollapsed;
-      document.getElementById('sidebar').classList.toggle('collapsed', this.sidebarCollapsed);
-      sidebarToggle.classList.toggle('collapsed', this.sidebarCollapsed);
-      sidebarToggle.innerHTML = this.sidebarCollapsed ? '&rsaquo;' : '&lsaquo;';
+    const backdrop = document.getElementById('sidebar-backdrop');
+    const isMobile = () => window.innerWidth <= 600;
+    const setSidebar = (collapsed) => {
+      this.sidebarCollapsed = collapsed;
+      document.getElementById('sidebar').classList.toggle('collapsed', collapsed);
+      sidebarToggle.classList.toggle('collapsed', collapsed);
+      sidebarToggle.innerHTML = collapsed ? '&rsaquo;' : '&lsaquo;';
+      backdrop.classList.toggle('show', !collapsed && isMobile());
       setTimeout(() => this.renderer.resize(), 250);
+    };
+    sidebarToggle.addEventListener('click', () => setSidebar(!this.sidebarCollapsed));
+    backdrop.addEventListener('click', () => setSidebar(true));
+    // Start collapsed on mobile so the map is visible on first load.
+    if (isMobile()) setSidebar(true);
+    // Re-evaluate backdrop visibility on orientation/viewport changes:
+    // if the user rotates from mobile portrait to a wide landscape, the
+    // sidebar should stop pretending to be a modal.
+    window.addEventListener('resize', () => {
+      backdrop.classList.toggle('show', !this.sidebarCollapsed && isMobile());
     });
 
     // Tab switching
@@ -1386,12 +1439,13 @@ class App {
       });
     });
 
-    // Canvas click for tile info
+    // Canvas tap for tile info — handled separately for mouse vs touch so
+    // that scrolls/drags don't fire taps on mobile.
     const canvas = document.getElementById('world-canvas');
-    const handleTap = (e) => {
+    const handleTap = (clientX, clientY) => {
       const rect = canvas.getBoundingClientRect();
-      const x = (e.clientX || e.touches[0].clientX) - rect.left;
-      const y = (e.clientY || e.touches[0].clientY) - rect.top;
+      const x = clientX - rect.left;
+      const y = clientY - rect.top;
       const tile = this.renderer.screenToTile(x, y);
       if (tile) {
         this.sim.selectedTile = tile;
@@ -1401,18 +1455,59 @@ class App {
         document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
         document.querySelector('[data-tab="tile-tab"]').classList.add('active');
         document.getElementById('tile-tab').classList.add('active');
+        // Auto-open the sidebar on mobile so the tap actually leads somewhere.
+        if (isMobile() && this.sidebarCollapsed) setSidebar(false);
       }
     };
-    canvas.addEventListener('click', handleTap);
-    canvas.addEventListener('touchstart', (e) => {
-      e.preventDefault();
-      handleTap(e);
-    }, { passive: false });
-
-    // Resize
-    window.addEventListener('resize', () => {
-      this.renderer.resize();
+    // Mouse path — the click event also fires on tap, but we suppress it
+    // for touches so we don't double-handle.
+    let suppressClickUntil = 0;
+    canvas.addEventListener('click', (e) => {
+      if (Date.now() < suppressClickUntil) return;
+      handleTap(e.clientX, e.clientY);
     });
+    // Touch path — only treat short, non-dragging touches as taps.
+    let touchStart = null;
+    canvas.addEventListener('touchstart', (e) => {
+      if (e.touches.length !== 1) { touchStart = null; return; }
+      const t = e.touches[0];
+      touchStart = { x: t.clientX, y: t.clientY, time: Date.now() };
+    }, { passive: true });
+    canvas.addEventListener('touchmove', (e) => {
+      if (!touchStart || e.touches.length !== 1) return;
+      const t = e.touches[0];
+      if (Math.hypot(t.clientX - touchStart.x, t.clientY - touchStart.y) > 12) {
+        touchStart = null; // user is dragging, not tapping
+      }
+    }, { passive: true });
+    canvas.addEventListener('touchend', (e) => {
+      if (!touchStart || e.changedTouches.length === 0) { touchStart = null; return; }
+      const t = e.changedTouches[0];
+      const dx = Math.abs(t.clientX - touchStart.x);
+      const dy = Math.abs(t.clientY - touchStart.y);
+      const dt = Date.now() - touchStart.time;
+      touchStart = null;
+      if (dx <= 12 && dy <= 12 && dt < 600) {
+        suppressClickUntil = Date.now() + 500;
+        e.preventDefault();
+        handleTap(t.clientX, t.clientY);
+      }
+    }, { passive: false });
+    // Block iOS double-tap zoom from selecting elements behind the canvas.
+    canvas.addEventListener('touchcancel', () => { touchStart = null; });
+
+    // Resize — also re-fit on orientation changes, soft-keyboard show/hide,
+    // and iOS Safari address-bar collapse via visualViewport.
+    const onResize = () => this.renderer.resize();
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', () => {
+      // Some browsers report stale dimensions until after the rotate finishes.
+      setTimeout(onResize, 150);
+      setTimeout(onResize, 400);
+    });
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', onResize);
+    }
   }
 
   updateTileInfo(tx, ty) {
