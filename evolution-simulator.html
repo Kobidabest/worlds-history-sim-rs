@@ -6,13 +6,13 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>Evolution Ecosystem Simulator</title>
 <style>
-*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html,body{width:100%;height:100%;overflow:hidden;background:#1a1a2e;color:#e0e0e0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;font-size:14px;touch-action:none}
-#app{display:flex;flex-direction:column;height:100%}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+html,body{width:100%;height:100%;overflow:hidden;background:#1a1a2e;color:#e0e0e0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;font-size:14px;touch-action:none;overscroll-behavior:none}
+#app{display:flex;flex-direction:column;height:100%;padding-top:env(safe-area-inset-top);padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right);padding-bottom:env(safe-area-inset-bottom)}
 #toolbar{display:flex;align-items:center;gap:8px;padding:6px 10px;background:#16213e;border-bottom:1px solid #0f3460;flex-shrink:0;flex-wrap:wrap;z-index:10}
-#toolbar button{padding:6px 14px;border:1px solid #0f3460;background:#1a1a2e;color:#e0e0e0;border-radius:6px;font-size:13px;cursor:pointer;white-space:nowrap}
+#toolbar button{padding:8px 14px;min-height:36px;border:1px solid #0f3460;background:#1a1a2e;color:#e0e0e0;border-radius:6px;font-size:13px;cursor:pointer;white-space:nowrap;touch-action:manipulation}
 #toolbar button:active,#toolbar button.active{background:#0f3460;border-color:#e94560}
-#toolbar select{padding:5px 8px;border:1px solid #0f3460;background:#1a1a2e;color:#e0e0e0;border-radius:6px;font-size:13px}
+#toolbar select{padding:7px 8px;min-height:36px;border:1px solid #0f3460;background:#1a1a2e;color:#e0e0e0;border-radius:6px;font-size:13px;touch-action:manipulation}
 #toolbar .sep{width:1px;height:24px;background:#0f3460;flex-shrink:0}
 #toolbar label{font-size:12px;color:#a0a0c0}
 #toolbar span.stat{font-size:12px;color:#e94560;font-weight:600}
@@ -49,16 +49,42 @@ canvas{display:block;image-rendering:pixelated}
 #loading .bar-outer{width:260px;height:8px;background:#0f3460;border-radius:4px;overflow:hidden}
 #loading .bar-inner{height:100%;background:#e94560;border-radius:4px;transition:width .3s}
 #loading p{margin-top:8px;color:#a0a0c0;font-size:13px}
+#sidebar-toggle{min-width:28px;min-height:48px}
+#sidebar-backdrop{position:absolute;inset:0;background:rgba(10,10,20,0.55);z-index:15;display:none}
+#sidebar-backdrop.show{display:block}
 @media(max-width:768px){
   #sidebar{width:280px}
   #sidebar-toggle{right:280px}
   #sidebar-toggle.collapsed{right:0}
 }
 @media(max-width:600px){
-  #sidebar{position:absolute;right:0;top:0;bottom:0;z-index:20;width:300px}
+  #sidebar{position:absolute;right:0;top:0;bottom:0;z-index:20;width:min(85vw,320px)}
   #sidebar.collapsed{width:0}
-  #sidebar-toggle{right:300px;z-index:21}
+  #sidebar-toggle{right:min(85vw,320px);z-index:21;padding:12px 6px}
   #sidebar-toggle.collapsed{right:0}
+  #toolbar{gap:6px;padding:5px 8px}
+  #toolbar button{padding:8px 10px;font-size:12px}
+  #toolbar select{padding:7px 6px;font-size:12px;max-width:42vw}
+  /* Drop auxiliary labels on small screens; the selects next to them make
+     their meaning obvious. */
+  #toolbar label[data-compact-hide]{display:none}
+  #toolbar .sep{height:20px}
+  /* Shrink decorative separators when wrapping gets crowded. */
+  #tab-bar button{padding:10px 4px;font-size:11px}
+  #speed-slider{width:70px}
+}
+@media(max-width:400px){
+  #toolbar{gap:4px;padding:4px 6px}
+  #toolbar button{padding:8px;font-size:12px}
+  #toolbar span.stat{font-size:11px}
+  #sidebar{width:min(92vw,320px)}
+  #sidebar-toggle{right:min(92vw,320px)}
+  #tab-bar button{padding:10px 2px;font-size:10px}
+}
+@media(orientation:landscape) and (max-height:480px){
+  #toolbar{padding:3px 8px;gap:6px}
+  #toolbar button{padding:6px 10px;min-height:30px;font-size:12px}
+  #toolbar select{padding:5px 6px;min-height:30px;font-size:12px}
 }
 </style>
 </head>
@@ -72,37 +98,45 @@ canvas{display:block;image-rendering:pixelated}
   <div id="toolbar">
     <button id="btn-pause">Pause</button>
     <div class="sep"></div>
-    <label>Speed</label>
-    <input type="range" id="speed-slider" min="1" max="20" value="3">
+    <label data-compact-hide>Speed</label>
+    <input type="range" id="speed-slider" min="1" max="20" value="3" aria-label="Simulation speed">
     <div class="sep"></div>
-    <label>View</label>
-    <select id="view-select">
+    <label data-compact-hide>View</label>
+    <select id="view-select" aria-label="View mode">
       <option value="biome">Biomes</option>
       <option value="altitude">Altitude</option>
       <option value="temperature">Temperature</option>
       <option value="rainfall">Rainfall</option>
     </select>
     <div class="sep"></div>
-    <button id="btn-creatures" class="active">Show Creatures</button>
+    <button id="btn-creatures" class="active" aria-label="Toggle creature rendering">Creatures</button>
     <div class="sep"></div>
-    <span class="stat">Tick: <span id="stat-tick">0</span></span>
-    <span class="stat">Pop: <span id="stat-pop">0</span></span>
-    <span class="stat">Species: <span id="stat-species">0</span></span>
+    <label data-compact-hide>Planet</label>
+    <select id="planet-select" aria-label="Planet preset"></select>
     <div class="sep"></div>
-    <button id="btn-new">New World</button>
+    <span class="stat">T:<span id="stat-tick">0</span></span>
+    <span class="stat">Pop:<span id="stat-pop">0</span></span>
+    <span class="stat">Sp:<span id="stat-species">0</span></span>
+    <div class="sep"></div>
+    <button id="btn-new">New</button>
   </div>
   <div id="main-area">
     <div id="canvas-wrap">
       <canvas id="world-canvas"></canvas>
     </div>
-    <button id="sidebar-toggle">&lsaquo;</button>
+    <div id="sidebar-backdrop"></div>
+    <button id="sidebar-toggle" aria-label="Toggle sidebar">&lsaquo;</button>
     <div id="sidebar">
       <div id="tab-bar">
         <button class="active" data-tab="species-tab">Species</button>
+        <button data-tab="planet-tab">Planet</button>
         <button data-tab="tile-tab">Tile Info</button>
         <button data-tab="graph-tab">Graphs</button>
       </div>
       <div id="species-tab" class="tab-content active"></div>
+      <div id="planet-tab" class="tab-content">
+        <div id="planet-info"><p style="color:#a0a0c0">No planet loaded.</p></div>
+      </div>
       <div id="tile-tab" class="tab-content">
         <div id="tile-info"><p style="color:#a0a0c0">Tap a tile on the map to see details.</p></div>
       </div>
@@ -134,7 +168,7 @@ const CFG = {
   SPECIATION_INTERVAL: 50,
   SNAPSHOT_INTERVAL: 10,
   MAX_SNAPSHOTS: 500,
-  NUM_GENES: 14,
+  NUM_GENES: 18,
   MUTATION_RATE: 0.08,
   MUTATION_AMOUNT: 0.15,
   BLEND_CHANCE: 0.3,
@@ -146,15 +180,67 @@ const G = {
   BODY_SIZE:0, SPEED:1, SENSE_RANGE:2, DIET:3,
   COLD_TOL:4, HEAT_TOL:5, CAMOUFLAGE:6, AGGRESSION:7,
   LONGEVITY:8, FERTILITY:9, OFFSPRING:10, EFFICIENCY:11,
-  WATER_NEED:12, LEG_STRENGTH:13
+  WATER_NEED:12, LEG_STRENGTH:13,
+  RAD_TOL:14, TOX_TOL:15, PRESS_TOL:16, PHOTOSYN:17
 };
 
 const GENE_NAMES = [
   "Body Size","Speed","Sense Range","Diet",
   "Cold Tolerance","Heat Tolerance","Camouflage","Aggression",
   "Longevity","Fertility","Offspring Count","Efficiency",
-  "Water Need","Leg Strength"
+  "Water Need","Leg Strength",
+  "Radiation Tolerance","Toxic Tolerance","Pressure Tolerance","Photosynthesis"
 ];
+
+// ============================================================
+// PLANET PRESETS — pick which world you want to evolve life on.
+// Each preset retunes the physical envelope (temperature, ocean fraction,
+// radiation, gravity) and the evolutionary pressures that follow.
+// ============================================================
+const PLANETS = [
+  { id:"earthlike",  name:"Earthlike",
+    star:"G-class Sun-like",  atmosphere:"O2 / N2",   solvent:"Liquid water",
+    gravity:1.00, meanTemp:-2.5,  tempSpan:65,  radiation:0.10, toxicity:0.00,
+    oceanFrac:0.55, mutation:1.0, oceanColor:[28,66,84],  solar:1.00 },
+  { id:"desert",     name:"Desert World",
+    star:"K-class Orange Dwarf", atmosphere:"O2 / N2", solvent:"Dry / frozen",
+    gravity:0.90, meanTemp:15.0, tempSpan:80,  radiation:0.25, toxicity:0.00,
+    oceanFrac:0.05, mutation:1.1, oceanColor:[120,90,60], solar:0.85 },
+  { id:"ocean",      name:"Ocean World",
+    star:"G-class Sun-like",  atmosphere:"O2 / N2",   solvent:"Liquid water",
+    gravity:1.15, meanTemp:6.0,  tempSpan:35,  radiation:0.08, toxicity:0.00,
+    oceanFrac:0.92, mutation:1.0, oceanColor:[20,60,90],  solar:1.00 },
+  { id:"ice",        name:"Ice World",
+    star:"K-class Orange Dwarf", atmosphere:"O2 / N2", solvent:"Liquid water",
+    gravity:0.85, meanTemp:-30.0, tempSpan:40, radiation:0.15, toxicity:0.00,
+    oceanFrac:0.30, mutation:0.9, oceanColor:[60,90,120], solar:0.75 },
+  { id:"supearth",   name:"Super-Earth",
+    star:"G-class Sun-like",  atmosphere:"Thick CO2",  solvent:"Liquid water",
+    gravity:2.20, meanTemp:10.0, tempSpan:50,  radiation:0.05, toxicity:0.25,
+    oceanFrac:0.60, mutation:1.0, oceanColor:[32,72,90],  solar:1.00 },
+  { id:"lowgrav",    name:"Low-Gravity Moon",
+    star:"G-class Sun-like",  atmosphere:"O2 / N2",   solvent:"Liquid water",
+    gravity:0.38, meanTemp:-5.0, tempSpan:70,  radiation:0.35, toxicity:0.00,
+    oceanFrac:0.35, mutation:1.2, oceanColor:[36,72,90],  solar:1.00 },
+  { id:"venus",      name:"Venusian Hell",
+    star:"G-class Sun-like",  atmosphere:"Sulfuric",   solvent:"Sulfuric acid",
+    gravity:0.91, meanTemp:60.0, tempSpan:25,  radiation:0.10, toxicity:0.80,
+    oceanFrac:0.20, mutation:1.3, oceanColor:[168,142,90], solar:1.00 },
+  { id:"titan",      name:"Titan Analogue",
+    star:"K-class Orange Dwarf", atmosphere:"Methane", solvent:"Liquid methane",
+    gravity:0.14, meanTemp:-90.0, tempSpan:15, radiation:0.15, toxicity:0.45,
+    oceanFrac:0.30, mutation:0.85, oceanColor:[60,42,30], solar:0.55 },
+  { id:"bluehot",    name:"Blue-Giant Hothouse",
+    star:"B-class Blue Giant", atmosphere:"Thick CO2", solvent:"Liquid water",
+    gravity:1.30, meanTemp:35.0, tempSpan:55,  radiation:0.60, toxicity:0.25,
+    oceanFrac:0.45, mutation:1.6, oceanColor:[40,70,100], solar:1.20 },
+  { id:"tidelock",   name:"Red Dwarf Tide-Lock",
+    star:"M-class Red Dwarf", atmosphere:"O2 / N2",    solvent:"Liquid water",
+    gravity:0.80, meanTemp:-10.0, tempSpan:120, radiation:0.45, toxicity:0.00,
+    oceanFrac:0.35, mutation:1.4, oceanColor:[30,55,75],  solar:0.60 }
+];
+
+const DEFAULT_PLANET = PLANETS[0];
 
 // ============================================================
 // PERLIN NOISE (Classic 2D)
@@ -245,10 +331,15 @@ const BIOMES = {
 };
 const BIOME_LIST = Object.values(BIOMES);
 
-function classifyBiome(alt, rain, temp) {
+function classifyBiome(alt, rain, temp, planet) {
   if (alt < 0) return BIOMES.OCEAN;
-  if (temp < -15) return BIOMES.ICE_CAP;
-  if (temp < 0) {
+  // Re-center the climate envelope on the planet's mean temperature so
+  // that even Titan has a tundra-equator and ice-cap poles rather than
+  // one flat biome blanket. The thresholds are in planet-relative degrees.
+  const mean = (planet && planet.meanTemp !== undefined) ? planet.meanTemp : 0;
+  const rel = temp - mean;
+  if (rel < -12) return BIOMES.ICE_CAP;
+  if (rel < -2) {
     if (rain < 725) return BIOMES.TUNDRA;
     return BIOMES.TAIGA;
   }
@@ -262,8 +353,9 @@ function classifyBiome(alt, rain, temp) {
 // WORLD GENERATION
 // ============================================================
 class World {
-  constructor(seed) {
+  constructor(seed, planet) {
     this.seed = seed;
+    this.planet = planet || DEFAULT_PLANET;
     this.W = CFG.W;
     this.H = CFG.H;
     this.altitude = new Float32Array(this.W * this.H);
@@ -327,8 +419,10 @@ class World {
         const edgeFactor = Math.sin(ny * Math.PI);
         alt *= (0.3 + 0.7 * edgeFactor);
 
-        // Normalize
-        alt = Math.max(-15000, Math.min(15000, alt - 4500));
+        // Shift sea level to hit the planet's target ocean fraction.
+        // oceanFrac=0.5 keeps the historical baseline (-4500 shift).
+        const seaShift = -4500 + (0.5 - this.planet.oceanFrac) * 9000;
+        alt = Math.max(-15000, Math.min(15000, alt + seaShift));
         this.altitude[i] = alt;
       }
     }
@@ -367,18 +461,24 @@ class World {
       }
     }
 
-    // Stage 3: Temperature
+    // Stage 3: Temperature — driven by the planet's mean & span.
+    const tMean = this.planet.meanTemp;
+    const tSpan = this.planet.tempSpan;
+    const tMin = tMean - tSpan * 0.5;
+    const tMax = tMean + tSpan * 0.5;
     for (let y = 0; y < this.H; y++) {
       for (let x = 0; x < this.W; x++) {
         const i = this.idx(x, y);
         const ny = y / this.H;
         const nx = x / this.W;
 
-        const latTemp = Math.sin(ny * Math.PI) * 30 - 5;
-        const noise = p1.octave(nx + 20, ny + 20, 2, 0.5, 2.0) * 3;
-        const altReduction = Math.max(0, this.altitude[i]) / 1000 * CFG.TEMP_ALT_FACTOR;
+        // Latitude (equator warm, poles cold) in planet-relative terms.
+        const latTemp = tMean + (Math.sin(ny * Math.PI) - 0.5) * tSpan;
+        const noise = p1.octave(nx + 20, ny + 20, 2, 0.5, 2.0) * tSpan * 0.05;
+        const altReduction = Math.max(0, this.altitude[i]) / 1000 * CFG.TEMP_ALT_FACTOR
+          * (tSpan / 65);
 
-        this.temperature[i] = Math.max(-35, Math.min(30, latTemp + noise - altReduction));
+        this.temperature[i] = Math.max(tMin, Math.min(tMax, latTemp + noise - altReduction));
       }
     }
 
@@ -386,7 +486,9 @@ class World {
     for (let y = 0; y < this.H; y++) {
       for (let x = 0; x < this.W; x++) {
         const i = this.idx(x, y);
-        this.biome[i] = classifyBiome(this.altitude[i], this.rainfall[i], this.temperature[i]).id;
+        this.biome[i] = classifyBiome(
+          this.altitude[i], this.rainfall[i], this.temperature[i], this.planet
+        ).id;
       }
     }
   }
@@ -417,22 +519,27 @@ function expressGene(genes) {
     offspringCnt: Math.round(1 + genes[G.OFFSPRING] * 3),
     efficiency:   0.5 + genes[G.EFFICIENCY] * 1.5,
     waterNeed:    genes[G.WATER_NEED],
-    legStrength:  genes[G.LEG_STRENGTH]
+    legStrength:  genes[G.LEG_STRENGTH],
+    radTol:       genes[G.RAD_TOL] || 0,
+    toxTol:       genes[G.TOX_TOL] || 0,
+    pressTol:     genes[G.PRESS_TOL] || 0,
+    photosyn:     genes[G.PHOTOSYN] || 0
   };
 }
 
-function crossover(a, b, rng) {
+function crossover(a, b, rng, mutationScale) {
+  mutationScale = mutationScale || 1;
   const child = new Float32Array(CFG.NUM_GENES);
   const split = rng.int(1, CFG.NUM_GENES - 1);
+  const mRate = Math.min(0.9, CFG.MUTATION_RATE * mutationScale);
+  const mAmt = Math.min(0.6, CFG.MUTATION_AMOUNT * mutationScale);
   for (let i = 0; i < CFG.NUM_GENES; i++) {
     if (i < split) child[i] = a[i]; else child[i] = b[i];
-    // Blending
     if (rng.chance(CFG.BLEND_CHANCE)) {
       child[i] = (a[i] + b[i]) * 0.5;
     }
-    // Mutation
-    if (rng.chance(CFG.MUTATION_RATE)) {
-      child[i] += rng.range(-CFG.MUTATION_AMOUNT, CFG.MUTATION_AMOUNT);
+    if (rng.chance(mRate)) {
+      child[i] += rng.range(-mAmt, mAmt);
     }
     child[i] = Math.max(0, Math.min(1, child[i]));
   }
@@ -539,9 +646,10 @@ class TileEco {
 // SIMULATION
 // ============================================================
 class Simulation {
-  constructor(seed) {
+  constructor(seed, planet) {
     this.rng = new RNG(seed);
-    this.world = new World(seed);
+    this.planet = planet || DEFAULT_PLANET;
+    this.world = new World(seed, this.planet);
     this.tick = 0;
     this.creatures = [];
     this.species = [];
@@ -693,9 +801,40 @@ class Simulation {
         c.health -= (waterNeedScaled - rain) / 500 * 0.02;
       }
 
-      // Base metabolism
-      c.energy -= c.pheno.bodySize * (2.0 - c.pheno.efficiency) * 0.3;
+      // Base metabolism — photosynthesis reduces the net cost.
+      c.energy -= c.pheno.bodySize * (2.0 - c.pheno.efficiency) * 0.3
+        * (1 - 0.4 * c.pheno.photosyn);
       c.age++;
+
+      // Planetary pressures — the real point of running on an alien world.
+      const P = this.planet;
+      // Ionizing radiation damage (atmospheric shielding is folded into
+      // P.radiation already).
+      const unshielded = Math.max(0, P.radiation - c.pheno.radTol);
+      if (unshielded > 0) {
+        c.health -= unshielded * 0.035;
+        c.energy -= unshielded * 0.4;
+      }
+      // Toxic atmosphere.
+      const exposed = Math.max(0, P.toxicity - c.pheno.toxTol);
+      if (exposed > 0) {
+        c.health -= exposed * 0.04;
+        c.energy -= exposed * 0.5;
+      }
+      // Pressure mismatch — both too-low and too-high hurt.
+      const pTarget = Math.min(1, P.gravity * 0.5); // proxy
+      const pGap = Math.abs(pTarget - c.pheno.pressTol);
+      if (pGap > 0.2) {
+        c.energy -= (pGap - 0.2) * 0.35;
+      }
+      // Gravity cost: heavy bodies pay more on high-g worlds.
+      if (P.gravity > 1.0) {
+        c.energy -= (P.gravity - 1.0) * c.pheno.bodySize * 0.08;
+      }
+      // Passive photosynthesis — scaled by the star's output.
+      if (c.pheno.photosyn > 0.05) {
+        c.energy += c.pheno.photosyn * P.solar * 0.4;
+      }
 
       // Death checks
       if (c.age > c.pheno.maxAge || c.energy <= 0 || c.health <= 0) {
@@ -805,7 +944,7 @@ class Simulation {
       const costPer = c.pheno.fertility * 0.3;
 
       for (let o = 0; o < avgOffspring && this.creatures.length + newCreatures.length < CFG.MAX_CREATURES; o++) {
-        const childGenes = crossover(c.genes, mate.genes, this.rng);
+        const childGenes = crossover(c.genes, mate.genes, this.rng, this.planet.mutation);
         const child = new Creature(c.x, c.y, childGenes, c.speciesId);
         child.energy = costPer * 0.8;
         newCreatures.push(child);
@@ -959,6 +1098,12 @@ class Renderer {
     this.offsetX = 0;
     this.offsetY = 0;
     this.scale = 1;
+    // User-controlled zoom & pan, applied on top of the fit-to-screen scale.
+    // viewZoom = 1 means "fit the whole map"; >1 zooms in; <1 lets you see
+    // beyond the map edges (clamped to MIN_ZOOM).
+    this.viewZoom = 1;
+    this.viewPanX = 0;
+    this.viewPanY = 0;
     this.terrainBuffer = null;
     this.terrainDirty = true;
 
@@ -968,10 +1113,18 @@ class Renderer {
 
   resize() {
     const wrap = this.canvas.parentElement;
-    this.canvas.width = wrap.clientWidth;
-    this.canvas.height = wrap.clientHeight;
+    const cw = wrap.clientWidth;
+    const ch = wrap.clientHeight;
+    // Back the canvas at device-pixel resolution so the map stays crisp
+    // on mobile and Retina displays while the CSS box keeps its size.
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    this.dpr = dpr;
+    this.canvas.style.width = cw + 'px';
+    this.canvas.style.height = ch + 'px';
+    this.canvas.width = Math.max(1, Math.round(cw * dpr));
+    this.canvas.height = Math.max(1, Math.round(ch * dpr));
 
-    // Fit world to screen
+    // Fit world to screen (all sizing in backing-store pixels).
     const sx = this.canvas.width / (CFG.W * this.tileSize);
     const sy = this.canvas.height / (CFG.H * this.tileSize);
     this.scale = Math.min(sx, sy);
@@ -979,6 +1132,9 @@ class Renderer {
     // Center
     this.offsetX = (this.canvas.width - CFG.W * this.tileSize * this.scale) / 2;
     this.offsetY = (this.canvas.height - CFG.H * this.tileSize * this.scale) / 2;
+    // Resize can leave the previous pan pointing off-canvas (e.g. after a
+    // rotation); rein it back in so the map doesn't disappear.
+    this.clampPan();
   }
 
   buildTerrainBuffer() {
@@ -996,9 +1152,14 @@ class Renderer {
         if (this.viewMode === 'biome') {
           const biome = BIOME_LIST[world.biome[i]];
           const altShade = world.altitude[i] > 0 ? 1.0 - (world.altitude[i] / 30000) : 1.0;
-          r = biome.color[0] * altShade;
-          g = biome.color[1] * altShade;
-          b = biome.color[2] * altShade;
+          // Non-aqueous solvents re-skin the ocean tile.
+          let bc = biome.color;
+          if (biome.id === BIOMES.OCEAN.id && world.planet && world.planet.oceanColor) {
+            bc = world.planet.oceanColor;
+          }
+          r = bc[0] * altShade;
+          g = bc[1] * altShade;
+          b = bc[2] * altShade;
         } else if (this.viewMode === 'altitude') {
           const norm = (world.altitude[i] + 15000) / 30000;
           if (world.altitude[i] < 0) {
@@ -1042,8 +1203,10 @@ class Renderer {
     ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
     ctx.save();
-    ctx.translate(this.offsetX, this.offsetY);
-    ctx.scale(this.scale * this.tileSize, this.scale * this.tileSize);
+    // Apply user pan/zoom on top of the fit-to-screen transform.
+    ctx.translate(this.offsetX + this.viewPanX, this.offsetY + this.viewPanY);
+    const s = this.scale * this.tileSize * this.viewZoom;
+    ctx.scale(s, s);
 
     // Draw terrain
     ctx.imageSmoothingEnabled = false;
@@ -1077,10 +1240,67 @@ class Renderer {
   }
 
   screenToTile(sx, sy) {
-    const tx = Math.floor((sx - this.offsetX) / (this.scale * this.tileSize));
-    const ty = Math.floor((sy - this.offsetY) / (this.scale * this.tileSize));
+    // Incoming coords are CSS pixels from getBoundingClientRect(); convert
+    // to backing-store pixels before reversing the canvas transform.
+    const dpr = this.dpr || 1;
+    sx *= dpr;
+    sy *= dpr;
+    const s = this.scale * this.tileSize * this.viewZoom;
+    const tx = Math.floor((sx - this.offsetX - this.viewPanX) / s);
+    const ty = Math.floor((sy - this.offsetY - this.viewPanY) / s);
     if (tx >= 0 && tx < CFG.W && ty >= 0 && ty < CFG.H) return [tx, ty];
     return null;
+  }
+
+  /// Reset zoom & pan to the fit-to-screen view.
+  resetView() {
+    this.viewZoom = 1;
+    this.viewPanX = 0;
+    this.viewPanY = 0;
+  }
+
+  /// Zoom around a point given in CSS pixels (from getBoundingClientRect).
+  /// Keeps the world coordinate under the cursor stationary.
+  zoomAround(cssX, cssY, factor) {
+    const dpr = this.dpr || 1;
+    const px = cssX * dpr, py = cssY * dpr;
+    const oldZoom = this.viewZoom;
+    const newZoom = Math.max(1, Math.min(8, oldZoom * factor));
+    if (newZoom === oldZoom) return;
+    // Pan correction so the point under the cursor stays put:
+    //   px = offsetX + viewPanX_old + worldX * scale * tileSize * oldZoom
+    //   px = offsetX + viewPanX_new + worldX * scale * tileSize * newZoom
+    // => viewPanX_new = viewPanX_old + (oldZoom - newZoom) * (px - offsetX - viewPanX_old) / oldZoom
+    const ratio = (newZoom - oldZoom) / oldZoom;
+    this.viewPanX -= (px - this.offsetX - this.viewPanX) * ratio;
+    this.viewPanY -= (py - this.offsetY - this.viewPanY) * ratio;
+    this.viewZoom = newZoom;
+    this.clampPan();
+  }
+
+  /// Pan by a delta in CSS pixels.
+  panBy(cssDx, cssDy) {
+    const dpr = this.dpr || 1;
+    this.viewPanX += cssDx * dpr;
+    this.viewPanY += cssDy * dpr;
+    this.clampPan();
+  }
+
+  /// Keep the map at least partly on-screen so users can't lose it.
+  clampPan() {
+    const s = this.scale * this.tileSize * this.viewZoom;
+    const mapW = CFG.W * s;
+    const mapH = CFG.H * s;
+    // Allow panning up to 80% of the map off-screen — enough freedom but
+    // a corner is always visible.
+    const slackX = mapW * 0.8;
+    const slackY = mapH * 0.8;
+    const minX = -this.offsetX - slackX;
+    const maxX = this.canvas.width - this.offsetX - mapW + slackX;
+    const minY = -this.offsetY - slackY;
+    const maxY = this.canvas.height - this.offsetY - mapH + slackY;
+    if (minX < maxX) this.viewPanX = Math.max(minX, Math.min(maxX, this.viewPanX));
+    if (minY < maxY) this.viewPanY = Math.max(minY, Math.min(maxY, this.viewPanY));
   }
 }
 
@@ -1155,11 +1375,12 @@ class App {
   }
 
   init() {
+    this.populatePlanetSelect();
     this.showLoading(0, "Generating world...");
 
     setTimeout(() => {
       const seed = Date.now() ^ (Math.random() * 0xffffffff);
-      this.sim = new Simulation(seed);
+      this.sim = new Simulation(seed, this.selectedPlanet());
       this.showLoading(50, "Populating creatures...");
 
       setTimeout(() => {
@@ -1179,6 +1400,24 @@ class App {
   showLoading(pct, text) {
     document.getElementById('load-bar').style.width = pct + '%';
     document.getElementById('load-text').textContent = text;
+  }
+
+  populatePlanetSelect() {
+    const sel = document.getElementById('planet-select');
+    if (!sel || sel.options.length > 0) return;
+    for (const p of PLANETS) {
+      const opt = document.createElement('option');
+      opt.value = p.id;
+      opt.textContent = p.name;
+      sel.appendChild(opt);
+    }
+  }
+
+  selectedPlanet() {
+    const sel = document.getElementById('planet-select');
+    if (!sel) return DEFAULT_PLANET;
+    const id = sel.value;
+    return PLANETS.find(p => p.id === id) || DEFAULT_PLANET;
   }
 
   hideLoading() {
@@ -1215,19 +1454,44 @@ class App {
     document.getElementById('btn-new').addEventListener('click', () => {
       const seed = Date.now() ^ (Math.random() * 0xffffffff);
       nextSpeciesId = 0;
-      this.sim = new Simulation(seed);
+      this.sim = new Simulation(seed, this.selectedPlanet());
       this.renderer.sim = this.sim;
       this.renderer.terrainDirty = true;
+      this.renderer.resetView();
     });
 
-    // Sidebar toggle
+    // Switching planet without changing seed also regenerates the world —
+    // otherwise the selector looks like it does nothing until you hit "New".
+    document.getElementById('planet-select').addEventListener('change', () => {
+      const seed = Date.now() ^ (Math.random() * 0xffffffff);
+      nextSpeciesId = 0;
+      this.sim = new Simulation(seed, this.selectedPlanet());
+      this.renderer.sim = this.sim;
+      this.renderer.terrainDirty = true;
+      this.renderer.resetView();
+    });
+
+    // Sidebar toggle (+ mobile backdrop).
     const sidebarToggle = document.getElementById('sidebar-toggle');
-    sidebarToggle.addEventListener('click', () => {
-      this.sidebarCollapsed = !this.sidebarCollapsed;
-      document.getElementById('sidebar').classList.toggle('collapsed', this.sidebarCollapsed);
-      sidebarToggle.classList.toggle('collapsed', this.sidebarCollapsed);
-      sidebarToggle.innerHTML = this.sidebarCollapsed ? '&rsaquo;' : '&lsaquo;';
+    const backdrop = document.getElementById('sidebar-backdrop');
+    const isMobile = () => window.innerWidth <= 600;
+    const setSidebar = (collapsed) => {
+      this.sidebarCollapsed = collapsed;
+      document.getElementById('sidebar').classList.toggle('collapsed', collapsed);
+      sidebarToggle.classList.toggle('collapsed', collapsed);
+      sidebarToggle.innerHTML = collapsed ? '&rsaquo;' : '&lsaquo;';
+      backdrop.classList.toggle('show', !collapsed && isMobile());
       setTimeout(() => this.renderer.resize(), 250);
+    };
+    sidebarToggle.addEventListener('click', () => setSidebar(!this.sidebarCollapsed));
+    backdrop.addEventListener('click', () => setSidebar(true));
+    // Start collapsed on mobile so the map is visible on first load.
+    if (isMobile()) setSidebar(true);
+    // Re-evaluate backdrop visibility on orientation/viewport changes:
+    // if the user rotates from mobile portrait to a wide landscape, the
+    // sidebar should stop pretending to be a modal.
+    window.addEventListener('resize', () => {
+      backdrop.classList.toggle('show', !this.sidebarCollapsed && isMobile());
     });
 
     // Tab switching
@@ -1240,12 +1504,13 @@ class App {
       });
     });
 
-    // Canvas click for tile info
+    // Canvas tap for tile info — handled separately for mouse vs touch so
+    // that scrolls/drags don't fire taps on mobile.
     const canvas = document.getElementById('world-canvas');
-    const handleTap = (e) => {
+    const handleTap = (clientX, clientY) => {
       const rect = canvas.getBoundingClientRect();
-      const x = (e.clientX || e.touches[0].clientX) - rect.left;
-      const y = (e.clientY || e.touches[0].clientY) - rect.top;
+      const x = clientX - rect.left;
+      const y = clientY - rect.top;
       const tile = this.renderer.screenToTile(x, y);
       if (tile) {
         this.sim.selectedTile = tile;
@@ -1255,18 +1520,159 @@ class App {
         document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
         document.querySelector('[data-tab="tile-tab"]').classList.add('active');
         document.getElementById('tile-tab').classList.add('active');
+        // Auto-open the sidebar on mobile so the tap actually leads somewhere.
+        if (isMobile() && this.sidebarCollapsed) setSidebar(false);
       }
     };
-    canvas.addEventListener('click', handleTap);
-    canvas.addEventListener('touchstart', (e) => {
+    // ---- Mouse path ---------------------------------------------------
+    // The click event also fires after a touch tap; we suppress it briefly
+    // so we don't double-handle. Mouse drag pans, wheel zooms.
+    let suppressClickUntil = 0;
+    let mouseDrag = null;
+    canvas.addEventListener('mousedown', (e) => {
+      mouseDrag = { x: e.clientX, y: e.clientY, moved: 0 };
+    });
+    canvas.addEventListener('mousemove', (e) => {
+      if (!mouseDrag) return;
+      const dx = e.clientX - mouseDrag.x;
+      const dy = e.clientY - mouseDrag.y;
+      mouseDrag.moved += Math.abs(dx) + Math.abs(dy);
+      if (mouseDrag.moved > 4) {
+        this.renderer.panBy(dx, dy);
+        mouseDrag.x = e.clientX;
+        mouseDrag.y = e.clientY;
+      }
+    });
+    canvas.addEventListener('mouseup', () => { mouseDrag = null; });
+    canvas.addEventListener('mouseleave', () => { mouseDrag = null; });
+    canvas.addEventListener('click', (e) => {
+      if (Date.now() < suppressClickUntil) return;
+      // Treat as tap only if the mouse barely moved.
+      if (mouseDrag && mouseDrag.moved > 4) return;
+      handleTap(e.clientX, e.clientY);
+    });
+    canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
-      handleTap(e);
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      // Smooth, bounded wheel zoom (works for trackpad + mouse wheel).
+      const factor = Math.exp(-e.deltaY * 0.0015);
+      this.renderer.zoomAround(x, y, factor);
     }, { passive: false });
 
-    // Resize
-    window.addEventListener('resize', () => {
-      this.renderer.resize();
+    // ---- Touch path ---------------------------------------------------
+    // 1 finger:  tap selects a tile; sliding > 12px starts panning.
+    // 2 fingers: pinch zoom around the midpoint, also pans together.
+    // Double-tap: reset zoom & pan.
+    let touchStart = null;     // { x, y, time } when 1-finger
+    let panAnchor = null;      // last 1-finger position while panning
+    let pinchAnchor = null;    // { dist, mx, my } between two fingers
+    let lastTapTime = 0;
+
+    const touchMid = (a, b) => ({
+      x: (a.clientX + b.clientX) / 2,
+      y: (a.clientY + b.clientY) / 2,
+      d: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
     });
+
+    canvas.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 1) {
+        const t = e.touches[0];
+        touchStart = { x: t.clientX, y: t.clientY, time: Date.now() };
+        panAnchor = { x: t.clientX, y: t.clientY };
+        pinchAnchor = null;
+      } else if (e.touches.length === 2) {
+        // Switching from 1 finger to 2: cancel pending tap & pan.
+        touchStart = null;
+        panAnchor = null;
+        const m = touchMid(e.touches[0], e.touches[1]);
+        pinchAnchor = m;
+      }
+    }, { passive: true });
+
+    canvas.addEventListener('touchmove', (e) => {
+      if (e.touches.length === 1 && panAnchor) {
+        const t = e.touches[0];
+        const dx = t.clientX - panAnchor.x;
+        const dy = t.clientY - panAnchor.y;
+        if (touchStart) {
+          // While we still might be a tap, only commit to a pan once moved.
+          if (Math.hypot(t.clientX - touchStart.x, t.clientY - touchStart.y) > 12) {
+            touchStart = null;
+          }
+        }
+        if (!touchStart) {
+          this.renderer.panBy(dx, dy);
+          panAnchor.x = t.clientX;
+          panAnchor.y = t.clientY;
+          e.preventDefault();
+        }
+      } else if (e.touches.length === 2 && pinchAnchor) {
+        e.preventDefault();
+        const m = touchMid(e.touches[0], e.touches[1]);
+        const rect = canvas.getBoundingClientRect();
+        // Pinch zoom about the midpoint.
+        if (pinchAnchor.d > 0) {
+          const factor = m.d / pinchAnchor.d;
+          this.renderer.zoomAround(m.x - rect.left, m.y - rect.top, factor);
+        }
+        // Two-finger pan along with the pinch.
+        this.renderer.panBy(m.x - pinchAnchor.x, m.y - pinchAnchor.y);
+        pinchAnchor = m;
+      }
+    }, { passive: false });
+
+    canvas.addEventListener('touchend', (e) => {
+      // Tap detection (1-finger, short, didn't drag).
+      if (touchStart && e.changedTouches.length > 0 && e.touches.length === 0) {
+        const t = e.changedTouches[0];
+        const dx = Math.abs(t.clientX - touchStart.x);
+        const dy = Math.abs(t.clientY - touchStart.y);
+        const dt = Date.now() - touchStart.time;
+        if (dx <= 12 && dy <= 12 && dt < 600) {
+          suppressClickUntil = Date.now() + 500;
+          // Double-tap → reset view.
+          if (Date.now() - lastTapTime < 320) {
+            this.renderer.resetView();
+            lastTapTime = 0;
+          } else {
+            lastTapTime = Date.now();
+            handleTap(t.clientX, t.clientY);
+          }
+          e.preventDefault();
+        }
+      }
+      // Clean up gesture state when fingers leave.
+      if (e.touches.length === 0) {
+        touchStart = null;
+        panAnchor = null;
+        pinchAnchor = null;
+      } else if (e.touches.length === 1) {
+        // Lifted to 1 finger — restart panning from the remaining finger.
+        const t = e.touches[0];
+        panAnchor = { x: t.clientX, y: t.clientY };
+        pinchAnchor = null;
+        touchStart = null; // never treat post-pinch lift as a tap
+      }
+    }, { passive: false });
+
+    canvas.addEventListener('touchcancel', () => {
+      touchStart = null; panAnchor = null; pinchAnchor = null;
+    });
+
+    // Resize — also re-fit on orientation changes, soft-keyboard show/hide,
+    // and iOS Safari address-bar collapse via visualViewport.
+    const onResize = () => this.renderer.resize();
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', () => {
+      // Some browsers report stale dimensions until after the rotate finishes.
+      setTimeout(onResize, 150);
+      setTimeout(onResize, 400);
+    });
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', onResize);
+    }
   }
 
   updateTileInfo(tx, ty) {
@@ -1359,6 +1765,43 @@ class App {
     }
   }
 
+  updatePlanetInfo() {
+    const el = document.getElementById('planet-info');
+    if (!el) return;
+    const p = this.sim.planet;
+    // Count average adaptation across the current population.
+    let radSum = 0, toxSum = 0, photoSum = 0, count = 0;
+    for (const c of this.sim.creatures) {
+      if (!c.alive) continue;
+      radSum += c.pheno.radTol; toxSum += c.pheno.toxTol; photoSum += c.pheno.photosyn;
+      count++;
+    }
+    const avg = (s) => count ? (s / count * 100).toFixed(0) + '%' : '—';
+    el.innerHTML = `
+      <div class="species-card" style="border-left:3px solid #e94560">
+        <div class="name" style="color:#e94560">${p.name}</div>
+        <div class="stats">
+          ${p.star}<br>
+          Atmosphere: ${p.atmosphere}<br>
+          Solvent: ${p.solvent}<br>
+          Gravity: ${p.gravity.toFixed(2)} g<br>
+          Mean temp: ${p.meanTemp.toFixed(1)}&deg;C (&plusmn; ${(p.tempSpan/2).toFixed(0)})<br>
+          Radiation: ${(p.radiation*100).toFixed(0)}%<br>
+          Toxicity: ${(p.toxicity*100).toFixed(0)}%<br>
+          Mutation: ${(p.mutation*100).toFixed(0)}%<br>
+          Ocean fraction: ${(p.oceanFrac*100).toFixed(0)}%
+        </div>
+      </div>
+      <div class="species-card">
+        <div class="name">Population adaptation</div>
+        <div class="stats">
+          Avg radiation tolerance: ${avg(radSum)}<br>
+          Avg toxic tolerance: ${avg(toxSum)}<br>
+          Avg photosynthesis: ${avg(photoSum)}
+        </div>
+      </div>`;
+  }
+
   startLoop() {
     const loop = (timestamp) => {
       this.animId = requestAnimationFrame(loop);
@@ -1383,6 +1826,7 @@ class App {
 
         this.updateSpeciesList();
         this.updateGraph();
+        this.updatePlanetInfo();
 
         if (this.sim.selectedTile) {
           this.updateTileInfo(this.sim.selectedTile[0], this.sim.selectedTile[1]);

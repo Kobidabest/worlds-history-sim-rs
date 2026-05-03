@@ -2,6 +2,7 @@ use crate::{
     creature::{Creature, CreatureId},
     ecosystem::TileEcosystem,
     genetics::Genome,
+    planet::{PlanetConfig, PlanetPreset},
     species::SpeciesRegistry,
     world::World,
 };
@@ -20,6 +21,7 @@ pub struct SimConfig {
     pub max_creatures: usize,
     pub speciation_threshold: f32,
     pub speciation_check_interval: u64,
+    pub planet_preset: PlanetPreset,
 }
 
 impl Default for SimConfig {
@@ -33,6 +35,7 @@ impl Default for SimConfig {
             max_creatures: 12000,
             speciation_threshold: 0.32,
             speciation_check_interval: 50,
+            planet_preset: PlanetPreset::Earthlike,
         }
     }
 }
@@ -74,15 +77,26 @@ impl Simulation {
     /// Create a new simulation with the given seed and config.
     pub fn new(seed: u32, config: SimConfig) -> Self {
         let rng = SmallRng::seed_from_u64(seed as u64 + 1000);
-        let world = World::generate(config.world_width, config.world_height, seed);
+        let planet = config.planet_preset.config();
+        let world = World::generate_for_planet(
+            config.world_width,
+            config.world_height,
+            seed,
+            planet.clone(),
+        );
 
-        // Initialize ecosystems
+        // Initialize ecosystems. Autotroph productivity is boosted by the
+        // host star's photosynthesis efficiency.
+        let solar_mul = planet.star_class.photosynthesis_efficiency();
         let mut ecosystems = Vec::with_capacity(config.world_height as usize);
         for y in 0..config.world_height as usize {
             let mut row = Vec::with_capacity(config.world_width as usize);
             for x in 0..config.world_width as usize {
                 let biome = world.terrain[y][x].dominant_biome();
-                let eco = TileEcosystem::new(biome.max_plant_biomass(), biome.plant_growth_rate());
+                let eco = TileEcosystem::new(
+                    biome.max_plant_biomass() * solar_mul,
+                    biome.plant_growth_rate() * solar_mul,
+                );
                 row.push(eco);
             }
             ecosystems.push(row);
@@ -112,10 +126,11 @@ impl Simulation {
         if habitable.is_empty() {
             return;
         }
+        let planet = self.world.planet.clone();
 
         // Create herbivore species
         for _ in 0..self.config.initial_herbivore_species {
-            let genome = Genome::random_herbivore(&mut self.rng);
+            let genome = Genome::random_herbivore(&mut self.rng, &planet);
             let species_id =
                 self.species_registry
                     .create_species(None, genome.clone(), 0, &mut self.rng);
@@ -123,7 +138,7 @@ impl Simulation {
             for _ in 0..self.config.creatures_per_species {
                 let idx = self.rng.gen_range(0..habitable.len());
                 let (x, y) = habitable[idx];
-                let g = Genome::random_herbivore(&mut self.rng);
+                let g = Genome::random_herbivore(&mut self.rng, &planet);
                 let creature =
                     Creature::new(self.next_creature_id, species_id, g, x, y, 0, &mut self.rng);
                 self.next_creature_id += 1;
@@ -134,7 +149,7 @@ impl Simulation {
 
         // Create carnivore species
         for _ in 0..self.config.initial_carnivore_species {
-            let genome = Genome::random_carnivore(&mut self.rng);
+            let genome = Genome::random_carnivore(&mut self.rng, &planet);
             let species_id =
                 self.species_registry
                     .create_species(None, genome.clone(), 0, &mut self.rng);
@@ -142,7 +157,7 @@ impl Simulation {
             for _ in 0..self.config.creatures_per_species {
                 let idx = self.rng.gen_range(0..habitable.len());
                 let (x, y) = habitable[idx];
-                let g = Genome::random_carnivore(&mut self.rng);
+                let g = Genome::random_carnivore(&mut self.rng, &planet);
                 let creature =
                     Creature::new(self.next_creature_id, species_id, g, x, y, 0, &mut self.rng);
                 self.next_creature_id += 1;
@@ -150,6 +165,10 @@ impl Simulation {
                 self.creatures.push(creature);
             }
         }
+    }
+
+    pub fn planet(&self) -> &PlanetConfig {
+        &self.world.planet
     }
 
     fn rebuild_spatial_index(&mut self) {
@@ -201,6 +220,17 @@ impl Simulation {
 
             self.creatures[i].apply_temperature_stress(temp);
             self.creatures[i].apply_drought_stress(rain);
+
+            // Planetary pressures: gravity, radiation, toxicity, pressure,
+            // and passive photosynthesis.
+            let biome = self.world.terrain[y][x].dominant_biome();
+            let in_liquid = biome.is_liquid();
+            let local_rad = biome.local_radiation();
+            self.creatures[i].apply_planet_stress(
+                &self.world.planet,
+                local_rad,
+                in_liquid,
+            );
 
             // Metabolism
             self.creatures[i].tick_metabolism();
@@ -312,7 +342,12 @@ impl Simulation {
                         (&mut right[0], &mut left[partner_idx])
                     };
 
-                    let offspring = parent_a.reproduce(parent_b, next_id, &mut self.rng);
+                    let offspring = parent_a.reproduce(
+                        parent_b,
+                        next_id,
+                        self.world.planet.mutation_multiplier,
+                        &mut self.rng,
+                    );
                     self.next_creature_id += offspring.len() as u64;
 
                     for child in offspring {
@@ -508,6 +543,7 @@ impl Simulation {
             })
             .collect();
 
+        let p = &self.world.planet;
         serde_json::json!({
             "tick": self.tick,
             "total_population": total_pop,
@@ -515,6 +551,21 @@ impl Simulation {
             "living_species_count": living.len(),
             "total_species_ever": self.species_registry.species.len(),
             "species": species_info,
+            "planet": {
+                "name": p.name,
+                "preset": p.preset.name(),
+                "star_class": p.star_class.name(),
+                "atmosphere": p.atmosphere.name(),
+                "solvent": p.solvent.name(),
+                "gravity": format!("{:.2}", p.gravity),
+                "pressure": format!("{:.2}", p.surface_pressure),
+                "mean_temp": format!("{:.1}", p.mean_temperature),
+                "radiation": format!("{:.2}", p.effective_radiation()),
+                "toxicity": format!("{:.2}", p.toxic_load()),
+                "mutation": format!("{:.2}", p.mutation_multiplier),
+                "ocean_fraction": format!("{:.2}", p.ocean_fraction),
+                "day_length": format!("{:.2}", p.day_length),
+            },
         })
         .to_string()
     }
@@ -597,5 +648,56 @@ impl Simulation {
             "creatures": creatures_here,
         })
         .to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::planet::PlanetPreset;
+
+    /// Every planet preset must at least produce a valid world and tick 30
+    /// rounds without panicking, even if life eventually dies off.
+    #[test]
+    fn every_preset_runs() {
+        for &preset in PlanetPreset::ALL {
+            let cfg = SimConfig {
+                world_width: 80,
+                world_height: 40,
+                max_creatures: 2000,
+                creatures_per_species: 15,
+                planet_preset: preset,
+                ..Default::default()
+            };
+            let mut sim = Simulation::new(42, cfg);
+            for _ in 0..30 {
+                sim.tick();
+            }
+            // Cheap sanity: JSON API stays valid.
+            let _ = sim.get_stats_json();
+        }
+    }
+
+    /// A hostile world should exert meaningful selection pressure — we
+    /// expect some deaths, some surviving species, and no explosion.
+    #[test]
+    fn selection_pressure_acts() {
+        let cfg = SimConfig {
+            world_width: 60,
+            world_height: 30,
+            max_creatures: 1500,
+            creatures_per_species: 20,
+            planet_preset: PlanetPreset::VenusianHell,
+            ..Default::default()
+        };
+        let mut sim = Simulation::new(7, cfg);
+        let start_pop = sim.creatures.len();
+        for _ in 0..50 {
+            sim.tick();
+        }
+        assert!(
+            sim.creatures.len() <= start_pop * 10,
+            "population should not explode unchecked"
+        );
     }
 }

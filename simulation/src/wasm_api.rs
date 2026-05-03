@@ -1,4 +1,5 @@
 use wasm_bindgen::prelude::*;
+use crate::planet::PlanetPreset;
 use crate::simulation::{SimConfig, Simulation};
 
 /// WASM-exposed simulation handle.
@@ -27,6 +28,52 @@ impl WasmSimulation {
         WasmSimulation {
             sim: Simulation::new(seed, config),
         }
+    }
+
+    /// Create a simulation on a specific alien planet preset.
+    ///
+    /// `preset_index` corresponds to [`PlanetPreset::ALL`].
+    pub fn new_on_planet(
+        seed: u32,
+        width: u32,
+        height: u32,
+        preset_index: u32,
+    ) -> WasmSimulation {
+        let config = SimConfig {
+            world_width: width,
+            world_height: height,
+            planet_preset: PlanetPreset::from_index(preset_index),
+            ..SimConfig::default()
+        };
+        WasmSimulation {
+            sim: Simulation::new(seed, config),
+        }
+    }
+
+    /// Get the JSON-encoded list of available planet presets.
+    pub fn planet_presets() -> String {
+        let arr: Vec<serde_json::Value> = PlanetPreset::ALL
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                let cfg = p.config();
+                serde_json::json!({
+                    "index": i,
+                    "id": format!("{:?}", p),
+                    "name": p.name(),
+                    "description": cfg.name,
+                    "star": cfg.star_class.name(),
+                    "atmosphere": cfg.atmosphere.name(),
+                    "solvent": cfg.solvent.name(),
+                    "gravity": cfg.gravity,
+                    "mean_temperature": cfg.mean_temperature,
+                    "radiation": cfg.effective_radiation(),
+                    "toxicity": cfg.toxic_load(),
+                    "ocean_fraction": cfg.ocean_fraction,
+                })
+            })
+            .collect();
+        serde_json::to_string(&arr).unwrap_or_else(|_| "[]".to_string())
     }
 
     /// Advance the simulation by N ticks.

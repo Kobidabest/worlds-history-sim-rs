@@ -1,8 +1,9 @@
+use crate::planet::PlanetConfig;
 use rand::{rngs::SmallRng, Rng};
 use serde::{Deserialize, Serialize};
 
 /// Number of genes in the genome.
-pub const GENE_COUNT: usize = 14;
+pub const GENE_COUNT: usize = 18;
 
 /// Gene indices for readability.
 pub mod gene {
@@ -20,7 +21,34 @@ pub mod gene {
     pub const ENERGY_EFFICIENCY: usize = 11;
     pub const WATER_NEED: usize = 12; // drought tolerance (inverted)
     pub const LEG_STRENGTH: usize = 13;
+    // Alien-world traits
+    pub const RADIATION_TOLERANCE: usize = 14;
+    pub const TOXIC_TOLERANCE: usize = 15;
+    pub const PRESSURE_TOLERANCE: usize = 16;
+    /// Fraction of energy budget derived from sunlight via photosynthesis.
+    pub const PHOTOSYNTHESIS: usize = 17;
 }
+
+pub const GENE_NAMES: [&str; GENE_COUNT] = [
+    "Body Size",
+    "Speed",
+    "Sense Range",
+    "Diet",
+    "Cold Tolerance",
+    "Heat Tolerance",
+    "Camouflage",
+    "Aggression",
+    "Longevity",
+    "Fertility",
+    "Offspring Count",
+    "Efficiency",
+    "Water Need",
+    "Leg Strength",
+    "Radiation Tolerance",
+    "Toxic Tolerance",
+    "Pressure Tolerance",
+    "Photosynthesis",
+];
 
 /// A genome is a fixed-size array of gene values in [0.0, 1.0].
 /// Each gene value represents a normalized trait.
@@ -39,51 +67,63 @@ impl Genome {
         Self { genes }
     }
 
-    /// Create a herbivore-biased starter genome.
-    pub fn random_herbivore(rng: &mut SmallRng) -> Self {
+    /// Create a herbivore-biased starter genome for the given planet.
+    /// The starting population is already somewhat pre-adapted so evolution
+    /// can take it further, but the planet does most of the selection.
+    pub fn random_herbivore(rng: &mut SmallRng, planet: &PlanetConfig) -> Self {
         let mut genome = Self::random(rng);
         genome.genes[gene::DIET] = rng.gen_range(0.0..0.25);
         genome.genes[gene::AGGRESSION] = rng.gen_range(0.0..0.3);
         genome.genes[gene::BODY_SIZE] = rng.gen_range(0.2..0.6);
         genome.genes[gene::SPEED] = rng.gen_range(0.3..0.7);
+        // Herbivores lean on photosynthesis on high-light worlds.
+        genome.genes[gene::PHOTOSYNTHESIS] = rng.gen_range(0.1..0.5);
+        adapt_to_planet(&mut genome, rng, planet);
         genome
     }
 
-    /// Create a carnivore-biased starter genome.
-    pub fn random_carnivore(rng: &mut SmallRng) -> Self {
+    /// Create a carnivore-biased starter genome for the given planet.
+    pub fn random_carnivore(rng: &mut SmallRng, planet: &PlanetConfig) -> Self {
         let mut genome = Self::random(rng);
         genome.genes[gene::DIET] = rng.gen_range(0.75..1.0);
         genome.genes[gene::AGGRESSION] = rng.gen_range(0.6..1.0);
         genome.genes[gene::BODY_SIZE] = rng.gen_range(0.4..0.8);
         genome.genes[gene::SPEED] = rng.gen_range(0.5..0.9);
         genome.genes[gene::SENSE_RANGE] = rng.gen_range(0.5..1.0);
+        genome.genes[gene::PHOTOSYNTHESIS] = rng.gen_range(0.0..0.15);
+        adapt_to_planet(&mut genome, rng, planet);
         genome
     }
 
     /// Sexual reproduction: crossover of two parent genomes with mutation.
-    pub fn crossover(parent_a: &Genome, parent_b: &Genome, rng: &mut SmallRng) -> Self {
+    /// `mutation_scale` is multiplied into per-gene mutation probability and
+    /// amplitude — use this to pipe through planetary mutagenicity.
+    pub fn crossover(
+        parent_a: &Genome,
+        parent_b: &Genome,
+        mutation_scale: f32,
+        rng: &mut SmallRng,
+    ) -> Self {
         let mut genes = [0.0f32; GENE_COUNT];
         let crossover_point = rng.gen_range(1..GENE_COUNT);
+        let mut_rate = (0.08 * mutation_scale).clamp(0.0, 0.9);
+        let mut_amp = (0.15 * mutation_scale).clamp(0.0, 0.6);
 
         for i in 0..GENE_COUNT {
-            // Crossover
             let base = if i < crossover_point {
                 parent_a.genes[i]
             } else {
                 parent_b.genes[i]
             };
 
-            // Blending with small chance
             let blended = if rng.gen_bool(0.3) {
                 (parent_a.genes[i] + parent_b.genes[i]) / 2.0
             } else {
                 base
             };
 
-            // Mutation
-            let mutated = if rng.gen_bool(0.08) {
-                // 8% per gene mutation rate
-                let delta = rng.gen_range(-0.15..0.15);
+            let mutated = if rng.gen_bool(mut_rate as f64) {
+                let delta = rng.gen_range(-mut_amp..mut_amp);
                 (blended + delta).clamp(0.0, 1.0)
             } else {
                 blended
@@ -104,6 +144,33 @@ impl Genome {
             .map(|(a, b)| (a - b).powi(2))
             .sum();
         (sum / GENE_COUNT as f32).sqrt()
+    }
+}
+
+/// Nudge a random genome toward survivable values for the given planet.
+/// This gives founding populations a fighting chance; further adaptation is
+/// then driven by real selection pressure each tick.
+fn adapt_to_planet(genome: &mut Genome, rng: &mut SmallRng, planet: &PlanetConfig) {
+    let mean_temp_norm = ((planet.mean_temperature + 35.0) / 65.0).clamp(0.0, 1.0);
+    // Cold worlds: bias cold tolerance down (gene=0 means very cold-tolerant).
+    genome.genes[gene::COLD_TOLERANCE] =
+        (mean_temp_norm + rng.gen_range(-0.15..0.15)).clamp(0.0, 1.0);
+    genome.genes[gene::HEAT_TOLERANCE] =
+        (mean_temp_norm + rng.gen_range(-0.15..0.15)).clamp(0.0, 1.0);
+    // Higher radiation worlds: start with more tolerance (though still evolvable).
+    genome.genes[gene::RADIATION_TOLERANCE] =
+        (planet.effective_radiation() * 0.8 + rng.gen_range(0.0..0.25)).clamp(0.0, 1.0);
+    // Toxic atmosphere: baseline tolerance seed.
+    genome.genes[gene::TOXIC_TOLERANCE] =
+        (planet.toxic_load() * 0.7 + rng.gen_range(0.0..0.3)).clamp(0.0, 1.0);
+    // Pressure: scale roughly 0..1 across 0..6 atm.
+    let p_norm = (planet.surface_pressure / 6.0).clamp(0.0, 1.0);
+    genome.genes[gene::PRESSURE_TOLERANCE] =
+        (p_norm * 0.7 + rng.gen_range(0.0..0.3)).clamp(0.0, 1.0);
+    // Dry worlds: select for drought tolerance (water_need gene is
+    // "drought tolerance"; higher = more desert-adapted).
+    if planet.ocean_fraction < 0.2 {
+        genome.genes[gene::WATER_NEED] = rng.gen_range(0.5_f32..0.95_f32);
     }
 }
 
@@ -139,6 +206,14 @@ pub struct Phenotype {
     pub drought_tolerance: f32,
     /// Movement cost reduction in rough terrain.
     pub terrain_mobility: f32,
+    /// Radiation shielding: 1.0 = fully shielded, 0.0 = naked DNA.
+    pub radiation_tolerance: f32,
+    /// Tolerance to atmospheric toxicity.
+    pub toxic_tolerance: f32,
+    /// Tolerance to extreme atmospheric pressure (hi or lo).
+    pub pressure_tolerance: f32,
+    /// Autotrophic fraction: 0.0 = fully heterotrophic, 1.0 = near-plant.
+    pub photosynthesis: f32,
 }
 
 impl Phenotype {
@@ -161,6 +236,10 @@ impl Phenotype {
             metabolic_rate: 0.5 + (1.0 - g[gene::ENERGY_EFFICIENCY]) * 1.5,
             drought_tolerance: g[gene::WATER_NEED],
             terrain_mobility: g[gene::LEG_STRENGTH],
+            radiation_tolerance: g[gene::RADIATION_TOLERANCE],
+            toxic_tolerance: g[gene::TOXIC_TOLERANCE],
+            pressure_tolerance: g[gene::PRESSURE_TOLERANCE],
+            photosynthesis: g[gene::PHOTOSYNTHESIS],
         }
     }
 
@@ -169,9 +248,12 @@ impl Phenotype {
         temp >= self.cold_tolerance && temp <= self.heat_tolerance
     }
 
-    /// Energy cost per tick for basic metabolism.
+    /// Energy cost per tick for basic metabolism. Larger animals and
+    /// less-efficient metabolisms burn more; photosynthesis reduces the
+    /// net cost because some energy is made on the spot.
     pub fn base_energy_cost(&self) -> f32 {
-        self.body_size * self.metabolic_rate * 0.3
+        let raw = self.body_size * self.metabolic_rate * 0.3;
+        raw * (1.0 - 0.4 * self.photosynthesis)
     }
 
     /// Energy cost for moving one tile.
