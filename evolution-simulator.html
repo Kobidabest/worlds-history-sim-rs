@@ -1098,6 +1098,12 @@ class Renderer {
     this.offsetX = 0;
     this.offsetY = 0;
     this.scale = 1;
+    // User-controlled zoom & pan, applied on top of the fit-to-screen scale.
+    // viewZoom = 1 means "fit the whole map"; >1 zooms in; <1 lets you see
+    // beyond the map edges (clamped to MIN_ZOOM).
+    this.viewZoom = 1;
+    this.viewPanX = 0;
+    this.viewPanY = 0;
     this.terrainBuffer = null;
     this.terrainDirty = true;
 
@@ -1126,6 +1132,9 @@ class Renderer {
     // Center
     this.offsetX = (this.canvas.width - CFG.W * this.tileSize * this.scale) / 2;
     this.offsetY = (this.canvas.height - CFG.H * this.tileSize * this.scale) / 2;
+    // Resize can leave the previous pan pointing off-canvas (e.g. after a
+    // rotation); rein it back in so the map doesn't disappear.
+    this.clampPan();
   }
 
   buildTerrainBuffer() {
@@ -1194,8 +1203,10 @@ class Renderer {
     ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
     ctx.save();
-    ctx.translate(this.offsetX, this.offsetY);
-    ctx.scale(this.scale * this.tileSize, this.scale * this.tileSize);
+    // Apply user pan/zoom on top of the fit-to-screen transform.
+    ctx.translate(this.offsetX + this.viewPanX, this.offsetY + this.viewPanY);
+    const s = this.scale * this.tileSize * this.viewZoom;
+    ctx.scale(s, s);
 
     // Draw terrain
     ctx.imageSmoothingEnabled = false;
@@ -1234,10 +1245,62 @@ class Renderer {
     const dpr = this.dpr || 1;
     sx *= dpr;
     sy *= dpr;
-    const tx = Math.floor((sx - this.offsetX) / (this.scale * this.tileSize));
-    const ty = Math.floor((sy - this.offsetY) / (this.scale * this.tileSize));
+    const s = this.scale * this.tileSize * this.viewZoom;
+    const tx = Math.floor((sx - this.offsetX - this.viewPanX) / s);
+    const ty = Math.floor((sy - this.offsetY - this.viewPanY) / s);
     if (tx >= 0 && tx < CFG.W && ty >= 0 && ty < CFG.H) return [tx, ty];
     return null;
+  }
+
+  /// Reset zoom & pan to the fit-to-screen view.
+  resetView() {
+    this.viewZoom = 1;
+    this.viewPanX = 0;
+    this.viewPanY = 0;
+  }
+
+  /// Zoom around a point given in CSS pixels (from getBoundingClientRect).
+  /// Keeps the world coordinate under the cursor stationary.
+  zoomAround(cssX, cssY, factor) {
+    const dpr = this.dpr || 1;
+    const px = cssX * dpr, py = cssY * dpr;
+    const oldZoom = this.viewZoom;
+    const newZoom = Math.max(1, Math.min(8, oldZoom * factor));
+    if (newZoom === oldZoom) return;
+    // Pan correction so the point under the cursor stays put:
+    //   px = offsetX + viewPanX_old + worldX * scale * tileSize * oldZoom
+    //   px = offsetX + viewPanX_new + worldX * scale * tileSize * newZoom
+    // => viewPanX_new = viewPanX_old + (oldZoom - newZoom) * (px - offsetX - viewPanX_old) / oldZoom
+    const ratio = (newZoom - oldZoom) / oldZoom;
+    this.viewPanX -= (px - this.offsetX - this.viewPanX) * ratio;
+    this.viewPanY -= (py - this.offsetY - this.viewPanY) * ratio;
+    this.viewZoom = newZoom;
+    this.clampPan();
+  }
+
+  /// Pan by a delta in CSS pixels.
+  panBy(cssDx, cssDy) {
+    const dpr = this.dpr || 1;
+    this.viewPanX += cssDx * dpr;
+    this.viewPanY += cssDy * dpr;
+    this.clampPan();
+  }
+
+  /// Keep the map at least partly on-screen so users can't lose it.
+  clampPan() {
+    const s = this.scale * this.tileSize * this.viewZoom;
+    const mapW = CFG.W * s;
+    const mapH = CFG.H * s;
+    // Allow panning up to 80% of the map off-screen — enough freedom but
+    // a corner is always visible.
+    const slackX = mapW * 0.8;
+    const slackY = mapH * 0.8;
+    const minX = -this.offsetX - slackX;
+    const maxX = this.canvas.width - this.offsetX - mapW + slackX;
+    const minY = -this.offsetY - slackY;
+    const maxY = this.canvas.height - this.offsetY - mapH + slackY;
+    if (minX < maxX) this.viewPanX = Math.max(minX, Math.min(maxX, this.viewPanX));
+    if (minY < maxY) this.viewPanY = Math.max(minY, Math.min(maxY, this.viewPanY));
   }
 }
 
@@ -1394,6 +1457,7 @@ class App {
       this.sim = new Simulation(seed, this.selectedPlanet());
       this.renderer.sim = this.sim;
       this.renderer.terrainDirty = true;
+      this.renderer.resetView();
     });
 
     // Switching planet without changing seed also regenerates the world —
@@ -1404,6 +1468,7 @@ class App {
       this.sim = new Simulation(seed, this.selectedPlanet());
       this.renderer.sim = this.sim;
       this.renderer.terrainDirty = true;
+      this.renderer.resetView();
     });
 
     // Sidebar toggle (+ mobile backdrop).
@@ -1459,42 +1524,142 @@ class App {
         if (isMobile() && this.sidebarCollapsed) setSidebar(false);
       }
     };
-    // Mouse path — the click event also fires on tap, but we suppress it
-    // for touches so we don't double-handle.
+    // ---- Mouse path ---------------------------------------------------
+    // The click event also fires after a touch tap; we suppress it briefly
+    // so we don't double-handle. Mouse drag pans, wheel zooms.
     let suppressClickUntil = 0;
+    let mouseDrag = null;
+    canvas.addEventListener('mousedown', (e) => {
+      mouseDrag = { x: e.clientX, y: e.clientY, moved: 0 };
+    });
+    canvas.addEventListener('mousemove', (e) => {
+      if (!mouseDrag) return;
+      const dx = e.clientX - mouseDrag.x;
+      const dy = e.clientY - mouseDrag.y;
+      mouseDrag.moved += Math.abs(dx) + Math.abs(dy);
+      if (mouseDrag.moved > 4) {
+        this.renderer.panBy(dx, dy);
+        mouseDrag.x = e.clientX;
+        mouseDrag.y = e.clientY;
+      }
+    });
+    canvas.addEventListener('mouseup', () => { mouseDrag = null; });
+    canvas.addEventListener('mouseleave', () => { mouseDrag = null; });
     canvas.addEventListener('click', (e) => {
       if (Date.now() < suppressClickUntil) return;
+      // Treat as tap only if the mouse barely moved.
+      if (mouseDrag && mouseDrag.moved > 4) return;
       handleTap(e.clientX, e.clientY);
     });
-    // Touch path — only treat short, non-dragging touches as taps.
-    let touchStart = null;
+    canvas.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      // Smooth, bounded wheel zoom (works for trackpad + mouse wheel).
+      const factor = Math.exp(-e.deltaY * 0.0015);
+      this.renderer.zoomAround(x, y, factor);
+    }, { passive: false });
+
+    // ---- Touch path ---------------------------------------------------
+    // 1 finger:  tap selects a tile; sliding > 12px starts panning.
+    // 2 fingers: pinch zoom around the midpoint, also pans together.
+    // Double-tap: reset zoom & pan.
+    let touchStart = null;     // { x, y, time } when 1-finger
+    let panAnchor = null;      // last 1-finger position while panning
+    let pinchAnchor = null;    // { dist, mx, my } between two fingers
+    let lastTapTime = 0;
+
+    const touchMid = (a, b) => ({
+      x: (a.clientX + b.clientX) / 2,
+      y: (a.clientY + b.clientY) / 2,
+      d: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
+    });
+
     canvas.addEventListener('touchstart', (e) => {
-      if (e.touches.length !== 1) { touchStart = null; return; }
-      const t = e.touches[0];
-      touchStart = { x: t.clientX, y: t.clientY, time: Date.now() };
-    }, { passive: true });
-    canvas.addEventListener('touchmove', (e) => {
-      if (!touchStart || e.touches.length !== 1) return;
-      const t = e.touches[0];
-      if (Math.hypot(t.clientX - touchStart.x, t.clientY - touchStart.y) > 12) {
-        touchStart = null; // user is dragging, not tapping
+      if (e.touches.length === 1) {
+        const t = e.touches[0];
+        touchStart = { x: t.clientX, y: t.clientY, time: Date.now() };
+        panAnchor = { x: t.clientX, y: t.clientY };
+        pinchAnchor = null;
+      } else if (e.touches.length === 2) {
+        // Switching from 1 finger to 2: cancel pending tap & pan.
+        touchStart = null;
+        panAnchor = null;
+        const m = touchMid(e.touches[0], e.touches[1]);
+        pinchAnchor = m;
       }
     }, { passive: true });
-    canvas.addEventListener('touchend', (e) => {
-      if (!touchStart || e.changedTouches.length === 0) { touchStart = null; return; }
-      const t = e.changedTouches[0];
-      const dx = Math.abs(t.clientX - touchStart.x);
-      const dy = Math.abs(t.clientY - touchStart.y);
-      const dt = Date.now() - touchStart.time;
-      touchStart = null;
-      if (dx <= 12 && dy <= 12 && dt < 600) {
-        suppressClickUntil = Date.now() + 500;
+
+    canvas.addEventListener('touchmove', (e) => {
+      if (e.touches.length === 1 && panAnchor) {
+        const t = e.touches[0];
+        const dx = t.clientX - panAnchor.x;
+        const dy = t.clientY - panAnchor.y;
+        if (touchStart) {
+          // While we still might be a tap, only commit to a pan once moved.
+          if (Math.hypot(t.clientX - touchStart.x, t.clientY - touchStart.y) > 12) {
+            touchStart = null;
+          }
+        }
+        if (!touchStart) {
+          this.renderer.panBy(dx, dy);
+          panAnchor.x = t.clientX;
+          panAnchor.y = t.clientY;
+          e.preventDefault();
+        }
+      } else if (e.touches.length === 2 && pinchAnchor) {
         e.preventDefault();
-        handleTap(t.clientX, t.clientY);
+        const m = touchMid(e.touches[0], e.touches[1]);
+        const rect = canvas.getBoundingClientRect();
+        // Pinch zoom about the midpoint.
+        if (pinchAnchor.d > 0) {
+          const factor = m.d / pinchAnchor.d;
+          this.renderer.zoomAround(m.x - rect.left, m.y - rect.top, factor);
+        }
+        // Two-finger pan along with the pinch.
+        this.renderer.panBy(m.x - pinchAnchor.x, m.y - pinchAnchor.y);
+        pinchAnchor = m;
       }
     }, { passive: false });
-    // Block iOS double-tap zoom from selecting elements behind the canvas.
-    canvas.addEventListener('touchcancel', () => { touchStart = null; });
+
+    canvas.addEventListener('touchend', (e) => {
+      // Tap detection (1-finger, short, didn't drag).
+      if (touchStart && e.changedTouches.length > 0 && e.touches.length === 0) {
+        const t = e.changedTouches[0];
+        const dx = Math.abs(t.clientX - touchStart.x);
+        const dy = Math.abs(t.clientY - touchStart.y);
+        const dt = Date.now() - touchStart.time;
+        if (dx <= 12 && dy <= 12 && dt < 600) {
+          suppressClickUntil = Date.now() + 500;
+          // Double-tap → reset view.
+          if (Date.now() - lastTapTime < 320) {
+            this.renderer.resetView();
+            lastTapTime = 0;
+          } else {
+            lastTapTime = Date.now();
+            handleTap(t.clientX, t.clientY);
+          }
+          e.preventDefault();
+        }
+      }
+      // Clean up gesture state when fingers leave.
+      if (e.touches.length === 0) {
+        touchStart = null;
+        panAnchor = null;
+        pinchAnchor = null;
+      } else if (e.touches.length === 1) {
+        // Lifted to 1 finger — restart panning from the remaining finger.
+        const t = e.touches[0];
+        panAnchor = { x: t.clientX, y: t.clientY };
+        pinchAnchor = null;
+        touchStart = null; // never treat post-pinch lift as a tap
+      }
+    }, { passive: false });
+
+    canvas.addEventListener('touchcancel', () => {
+      touchStart = null; panAnchor = null; pinchAnchor = null;
+    });
 
     // Resize — also re-fit on orientation changes, soft-keyboard show/hide,
     // and iOS Safari address-bar collapse via visualViewport.
