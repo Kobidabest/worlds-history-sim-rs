@@ -443,12 +443,14 @@ function oceanBiomeFor(planet, alt, temp) {
   if (s.indexOf("methane") >= 0) return BIOMES.METHANE_LAKE;
   if (s.indexOf("ulfuric") >= 0) return BIOMES.SULFURIC_SEA;
   if (s.indexOf("Dry") >= 0 || s.indexOf("frozen") >= 0) return BIOMES.SILICA_DESERT;
-  // Water world: shallow + warm = productive reefs; very deep = abyssal.
+  // Water world: shallow + warm = productive reefs (the photic zone,
+  // a narrow band near coasts); deep open ocean is OCEAN; the deepest
+  // basins are ABYSSAL with very low productivity.
   if (alt !== undefined) {
     const mean = (planet && planet.meanTemp !== undefined) ? planet.meanTemp : 0;
-    const warm = (temp === undefined) ? true : (temp - mean > -8);
-    if (alt > -3500 && warm) return BIOMES.REEF;
-    if (alt < -9000) return BIOMES.ABYSSAL;
+    const warm = (temp === undefined) ? true : (temp - mean > -5);
+    if (alt > -1800 && warm) return BIOMES.REEF;
+    if (alt < -10000) return BIOMES.ABYSSAL;
   }
   return BIOMES.OCEAN;
 }
@@ -456,8 +458,12 @@ function oceanBiomeFor(planet, alt, temp) {
 // Planet-aware biome classification. Oceans take the solvent's biome; land
 // biomes depend on the planet's atmosphere chemistry and the local climate,
 // expressed relative to the planet's own mean temperature.
-function classifyBiome(alt, rain, temp, planet) {
+function classifyBiome(alt, rain, temp, planet, rainPct) {
   if (alt < 0) return oceanBiomeFor(planet, alt, temp);
+  // Percentile-based moisture rank (0 = driest, 1 = wettest land tile on
+  // this planet). Falls back to absolute rainfall thresholds for callers
+  // that don't pass a percentile.
+  const wet = (rainPct === undefined) ? Math.min(1, rain / 6000) : rainPct;
 
   const mean = (planet && planet.meanTemp !== undefined) ? planet.meanTemp : 0;
   const atm = (planet && planet.atmosphere) ? planet.atmosphere : "O2 / N2";
@@ -480,42 +486,49 @@ function classifyBiome(alt, rain, temp, planet) {
 
   if (sulfuric) {
     // Venusian palette: lava ridges, silica plains, crystal scrub, sulfuric haze.
-    if (rel > 8 && rain < 200) return BIOMES.LAVA_FIELD;
-    if (rain < 250) return BIOMES.SILICA_DESERT;
-    if (rain < 900) return BIOMES.CRYSTAL_FOREST;
-    if (rain < 1800) return BIOMES.HAZE_HIGHLAND;
+    if (rel > 8 && wet < 0.1) return BIOMES.LAVA_FIELD;
+    if (wet < 0.30) return BIOMES.SILICA_DESERT;
+    if (wet < 0.65) return BIOMES.CRYSTAL_FOREST;
+    if (wet < 0.90) return BIOMES.HAZE_HIGHLAND;
     return BIOMES.FUNGAL_MAT;
   }
   if (reducing) {
     // Titan-style palette: cryo plains, methane-fed crystal forests,
     // fungal mats where it's wet, geothermal vents along volcanic ridges.
-    if (rel < -4 && rain < 350) return BIOMES.CRYO_PLAIN;
+    if (rel < -4 && wet < 0.30) return BIOMES.CRYO_PLAIN;
     if (rel < -4) return BIOMES.FUNGAL_MAT;
-    if (rain < 200) return BIOMES.SILICA_DESERT;
-    if (rain < 900) return BIOMES.CRYSTAL_FOREST;
+    if (wet < 0.20) return BIOMES.SILICA_DESERT;
+    if (wet < 0.55) return BIOMES.CRYSTAL_FOREST;
     return BIOMES.FUNGAL_MAT;
   }
   if (!oxygen) {
     // Thick CO2 / trace: tough analogues of the temperate set.
     if (rel < -8) return BIOMES.CRYO_PLAIN;
     if (rel < -2) return BIOMES.HAZE_HIGHLAND;
-    if (rain < 250) return BIOMES.SILICA_DESERT;
-    if (rain < 900) return BIOMES.CRYSTAL_FOREST;
-    if (rain < 1600) return BIOMES.HAZE_HIGHLAND;
+    if (wet < 0.20) return BIOMES.SILICA_DESERT;
+    if (wet < 0.55) return BIOMES.CRYSTAL_FOREST;
+    if (wet < 0.80) return BIOMES.HAZE_HIGHLAND;
     return BIOMES.FUNGAL_MAT;
   }
 
   // Oxygen world — full Earthlike palette: ice → tundra → taiga →
-  // desert → grassland → forest → rainforest, with mountains taking the
-  // cold treatments regardless of latitude.
+  // desert → grassland → forest → rainforest. Rainfall is percentile-
+  // ranked so every world has a healthy mix of biomes, but the cutoffs
+  // tilt with planetary wetness: a desert world's "wettest" tiles are
+  // still only forest, not rainforest, while an ocean world's "driest"
+  // tiles still feel humid.
+  const aridShift = Math.max(-0.3, Math.min(0.3, (0.5 - planet.oceanFrac) * 0.6));
+  const tDesert  = Math.max(0.05, 0.20 + aridShift);
+  const tGrass   = Math.max(0.20, 0.55 + aridShift);
+  const tForest  = Math.max(0.45, 0.85 + aridShift);
   if (rel < -14) return BIOMES.ICE_CAP;
   if (rel < -4) {
-    if (rain < 500) return BIOMES.TUNDRA;
+    if (wet < 0.4) return BIOMES.TUNDRA;
     return BIOMES.TAIGA;
   }
-  if (rain < 275) return BIOMES.DESERT;
-  if (rain < 1100) return BIOMES.GRASSLAND;
-  if (rain < 1900) return BIOMES.FOREST;
+  if (wet < tDesert) return BIOMES.DESERT;
+  if (wet < tGrass)  return BIOMES.GRASSLAND;
+  if (wet < tForest) return BIOMES.FOREST;
   return BIOMES.RAINFOREST;
 }
 
@@ -531,6 +544,10 @@ class World {
     this.altitude = new Float32Array(this.W * this.H);
     this.temperature = new Float32Array(this.W * this.H);
     this.rainfall = new Float32Array(this.W * this.H);
+    /// 0..1 rank of each tile's rainfall within its temperature band. Used by
+    /// the biome classifier so each planet shows desert/grassland/forest/
+    /// rainforest bands regardless of how high or low its absolute rainfall is.
+    this.rainPct = new Float32Array(this.W * this.H);
     this.biome = new Uint8Array(this.W * this.H);
     this.continents = [];
     this.generate();
@@ -630,7 +647,7 @@ class World {
         // Scale rainfall by the planet's ocean fraction — dry worlds with
         // little surface liquid have a much weaker water cycle, so deserts
         // actually dominate. Ocean worlds get correspondingly rainier.
-        const rainScale = 0.28 + this.planet.oceanFrac * 1.45;
+        const rainScale = 0.18 + this.planet.oceanFrac * 0.75;
         this.rainfall[i] = Math.max(0, Math.min(13000, rain * rainScale));
       }
     }
@@ -656,12 +673,35 @@ class World {
       }
     }
 
+    // Stage 3b: Compute a 0..1 rain percentile over land tiles. The biome
+    // classifier uses this rank — not absolute rainfall — so every world has
+    // a healthy mix of desert / grassland / forest / rainforest tiles,
+    // regardless of how rainy or arid the world actually is.
+    const landRains = [];
+    for (let i = 0; i < this.altitude.length; i++) {
+      if (this.altitude[i] >= 0) landRains.push(this.rainfall[i]);
+    }
+    landRains.sort((a, b) => a - b);
+    const rankOf = (v) => {
+      if (landRains.length === 0) return 0.5;
+      let lo = 0, hi = landRains.length - 1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (landRains[mid] < v) lo = mid + 1; else hi = mid - 1;
+      }
+      return lo / landRains.length;
+    };
+    for (let i = 0; i < this.altitude.length; i++) {
+      this.rainPct[i] = this.altitude[i] < 0 ? 0 : rankOf(this.rainfall[i]);
+    }
+
     // Stage 4: Biome classification
     for (let y = 0; y < this.H; y++) {
       for (let x = 0; x < this.W; x++) {
         const i = this.idx(x, y);
         this.biome[i] = classifyBiome(
-          this.altitude[i], this.rainfall[i], this.temperature[i], this.planet
+          this.altitude[i], this.rainfall[i], this.temperature[i],
+          this.planet, this.rainPct[i]
         ).id;
       }
     }
