@@ -21,6 +21,11 @@ html,body{width:100%;height:100%;overflow:hidden;background:#1a1a2e;color:#e0e0e
 @keyframes flash{from{background:#e94560;color:#fff}to{background:#3a1020;color:#ffd0d8}}
 #tool-hint{position:absolute;left:10px;bottom:10px;z-index:8;background:rgba(20,30,50,0.85);border:1px solid #0f3460;color:#e0e0e0;padding:6px 10px;border-radius:6px;font-size:12px;pointer-events:none;opacity:0;transition:opacity .25s}
 #tool-hint.show{opacity:1}
+#map-legend{position:absolute;right:10px;bottom:10px;z-index:8;background:rgba(20,30,50,0.85);border:1px solid #0f3460;color:#e0e0e0;padding:6px 8px;border-radius:6px;font-size:11px;pointer-events:none;max-width:200px;line-height:1.5}
+#map-legend .row{display:flex;align-items:center;gap:6px;margin:1px 0}
+#map-legend .sw{width:12px;height:12px;border-radius:3px;flex-shrink:0;border:1px solid rgba(255,255,255,0.1)}
+#map-legend .title{font-weight:600;font-size:11px;color:#e94560;margin-bottom:3px}
+@media(max-width:600px){#map-legend{max-width:140px;font-size:10px;padding:5px 6px}#map-legend .sw{width:10px;height:10px}}
 #main-area{flex:1;display:flex;position:relative;overflow:hidden}
 #canvas-wrap{flex:1;position:relative;overflow:hidden}
 canvas{display:block;image-rendering:pixelated}
@@ -149,6 +154,7 @@ canvas{display:block;image-rendering:pixelated}
     <div id="canvas-wrap">
       <canvas id="world-canvas"></canvas>
       <div id="tool-hint"></div>
+      <div id="map-legend"></div>
     </div>
     <div id="sidebar-backdrop"></div>
     <button id="sidebar-toggle" aria-label="Toggle sidebar">&lsaquo;</button>
@@ -181,16 +187,16 @@ canvas{display:block;image-rendering:pixelated}
 // CONFIGURATION
 // ============================================================
 const CFG = {
-  W: 280, H: 140,
-  NUM_CONTINENTS: 18,
-  CONT_MIN_SIZE: 7.5, CONT_MAX_SIZE: 12.0,
+  W: 360, H: 180,
+  NUM_CONTINENTS: 22,
+  CONT_MIN_SIZE: 8.5, CONT_MAX_SIZE: 13.0,
   TEMP_ALT_FACTOR: 2.05,
   RAIN_DRY_FACTOR: 0.005,
-  INIT_HERB_SPECIES: 8,
-  INIT_CARN_SPECIES: 4,
-  INIT_AQUATIC_SPECIES: 4,    // marine founders (skipped on dry worlds)
-  CREATURES_PER_SPECIES: 55,
-  MAX_CREATURES: 18000,
+  INIT_HERB_SPECIES: 10,
+  INIT_CARN_SPECIES: 5,
+  INIT_AQUATIC_SPECIES: 5,    // marine founders (skipped on dry worlds)
+  CREATURES_PER_SPECIES: 60,
+  MAX_CREATURES: 22000,
   SPECIATION_THRESHOLD: 0.32,
   SPECIATION_INTERVAL: 50,
   SNAPSHOT_INTERVAL: 10,
@@ -2291,86 +2297,104 @@ class Renderer {
     const imgData = new ImageData(w, h);
     const data = imgData.data;
     const world = this.sim.world;
+    const alt = world.altitude;
+    const view = this.viewMode;
+    const eco = this.sim.ecosystem;
 
     for (let y = 0; y < h; y++) {
+      const yU = Math.max(0, y - 1), yD = Math.min(h - 1, y + 1);
       for (let x = 0; x < w; x++) {
         const i = y * w + x;
         const pi = i * 4;
-        let r, g, b;
 
-        if (this.viewMode === 'biome') {
-          // Each biome (including the alien ones) has its own colour, so the
-          // map directly shows the world's biome mosaic. Altitude darkens
-          // highlands; plant cover deepens the green of vegetated land.
+        // Hillshade — light from the north-west. The map suddenly reads as
+        // terrain rather than a flat tile-grid, so mountain ranges and
+        // valleys become legible at a glance.
+        const xL = (x - 1 + w) % w, xR = (x + 1) % w;
+        const slopeNW = alt[y*w+xL] + alt[yU*w+x] - alt[y*w+xR] - alt[yD*w+x];
+        const shade = Math.max(0.65, Math.min(1.25, 1 + slopeNW / 18000));
+
+        // Compute base RGB for this view mode.
+        let r, g, b;
+        if (view === 'biome') {
+          // Biome colour + altitude shading + live vegetation tint.
           const biome = BIOME_LIST[world.biome[i]];
-          const altShade = world.altitude[i] > 0 ? 1.0 - (world.altitude[i] / 30000) : 1.0;
           const bc = biome.color;
-          r = bc[0] * altShade;
-          g = bc[1] * altShade;
-          b = bc[2] * altShade;
-          // Vegetated tiles tint toward their standing plant biomass.
-          const eco = this.sim.ecosystem[i];
-          if (eco && eco.baseCap > 0.5) {
-            const cover = Math.min(1, eco.plantBiomass / (eco.baseCap * eco.plantPheno.capacity + 1));
-            r = r * (1 - cover * 0.35);
-            g = g * (1 - cover * 0.1) + cover * 30;
-            b = b * (1 - cover * 0.35);
+          const altShade = alt[i] > 0 ? 1 - alt[i] / 30000 : 1;
+          r = bc[0] * altShade; g = bc[1] * altShade; b = bc[2] * altShade;
+          const t = eco[i];
+          if (t && t.baseCap > 0.5) {
+            const cover = Math.min(1, t.plantBiomass / (t.baseCap * t.plantPheno.capacity + 1));
+            r = r * (1 - cover * 0.30);
+            g = g * (1 - cover * 0.05) + cover * 32;
+            b = b * (1 - cover * 0.30);
           }
-        } else if (this.viewMode === 'plants') {
-          // Plant biomass: bare → lush green.
-          const eco = this.sim.ecosystem[i];
-          if (world.altitude[i] < 0) { r = 18; g = 24; b = 38; }
-          else {
-            const cap = eco.baseCap * eco.plantPheno.capacity;
-            const norm = cap > 0.5 ? Math.min(1, eco.plantBiomass / cap) : 0;
-            r = 40 - norm * 20; g = 50 + norm * 170; b = 40 - norm * 20;
-          }
-        } else if (this.viewMode === 'microbes') {
-          // Microbial biomass: faint → vivid teal/violet.
-          const eco = this.sim.ecosystem[i];
-          const norm = Math.min(1, eco.microbeBiomass / 40);
-          r = 30 + norm * 120; g = 20 + norm * 120; b = 40 + norm * 160;
-        } else if (this.viewMode === 'altitude') {
-          const norm = (world.altitude[i] + 15000) / 30000;
-          if (world.altitude[i] < 0) {
-            r = 20; g = 30 + norm * 100; b = 100 + norm * 155;
+        } else if (view === 'plants') {
+          const t = eco[i];
+          if (alt[i] < 0) {
+            // Aquatic plant cover (phytoplankton).
+            const cap = (t && t.baseCap) ? t.baseCap * t.plantPheno.capacity : 0;
+            const norm = cap > 0.5 ? Math.min(1, t.plantBiomass / cap) : 0;
+            r = 18 + norm * 8; g = 32 + norm * 90; b = 70 + norm * 90;
           } else {
-            r = 50 + norm * 180; g = 120 + norm * 100; b = 40;
+            const cap = t.baseCap * t.plantPheno.capacity;
+            const norm = cap > 0.5 ? Math.min(1, t.plantBiomass / cap) : 0;
+            r = 50 - norm * 30; g = 55 + norm * 175; b = 45 - norm * 25;
           }
-        } else if (this.viewMode === 'temperature') {
-          const norm = (world.temperature[i] + 35) / 65;
+        } else if (view === 'microbes') {
+          const t = eco[i];
+          const norm = Math.min(1, t.microbeBiomass / 40);
+          r = 30 + norm * 120; g = 20 + norm * 120; b = 40 + norm * 160;
+        } else if (view === 'altitude') {
+          const norm = (alt[i] + 15000) / 30000;
+          if (alt[i] < 0) { r = 18; g = 28 + norm * 95; b = 95 + norm * 160; }
+          else if (alt[i] < 1500) { r = 70 + norm * 140; g = 130 + norm * 90; b = 60; }
+          else if (alt[i] < 5000) { r = 130 + norm * 100; g = 110 + norm * 60; b = 55; }
+          else { r = 200 + norm * 50; g = 200 + norm * 50; b = 210 + norm * 40; } // snow caps
+        } else if (view === 'temperature') {
+          const ws = this.sim;
+          const t = world.temperature[i] + (ws.seasonalTempOffset ? ws.seasonalTempOffset(y) : 0);
+          const pMin = this.sim.planet.meanTemp - this.sim.planet.tempSpan * 0.5;
+          const pMax = this.sim.planet.meanTemp + this.sim.planet.tempSpan * 0.5;
+          const norm = (t - pMin) / Math.max(1, pMax - pMin);
           r = norm * 255;
-          g = (1 - Math.abs(norm - 0.5) * 2) * 180;
+          g = (1 - Math.abs(norm - 0.5) * 2) * 200;
           b = (1 - norm) * 255;
-        } else if (this.viewMode === 'rainfall') {
+        } else if (view === 'rainfall') {
           const norm = world.rainfall[i] / 13000;
-          r = 20;
-          g = 40 + norm * 200;
-          b = 80 + norm * 175;
-        } else if (this.viewMode === 'carrion') {
-          // Dark base with red carrion intensity.
-          const eco = this.sim.ecosystem[i];
-          const norm = Math.min(1, eco.carrion / 5);
-          r = 30 + norm * 200; g = 20; b = 20;
-        } else if (this.viewMode === 'nutrients') {
-          // Soil fertility: brown→green.
-          const eco = this.sim.ecosystem[i];
-          const norm = Math.min(1, eco.nutrients / 20);
-          r = 40 + norm * 60; g = 30 + norm * 170; b = 25;
-        } else if (this.viewMode === 'disease') {
-          // Ocean-blue base; infection density glows magenta (filled below).
-          if (world.altitude[i] < 0) { r = 18; g = 28; b = 42; }
+          r = 30; g = 50 + norm * 195; b = 80 + norm * 175;
+        } else if (view === 'carrion') {
+          const norm = Math.min(1, eco[i].carrion / 5);
+          r = 25 + norm * 215; g = 18 + norm * 30; b = 18 + norm * 25;
+        } else if (view === 'nutrients') {
+          const norm = Math.min(1, eco[i].nutrients / 20);
+          r = 50 + norm * 60; g = 38 + norm * 175; b = 28 + norm * 20;
+        } else if (view === 'disease') {
+          if (alt[i] < 0) { r = 18; g = 28; b = 42; }
           else { r = 30; g = 34; b = 30; }
         }
 
-        data[pi] = Math.max(0, Math.min(255, r));
-        data[pi + 1] = Math.max(0, Math.min(255, g));
-        data[pi + 2] = Math.max(0, Math.min(255, b));
+        // Apply hillshade to all "geographic" views so the relief stays
+        // visible even when the colour is driven by something else.
+        if (view !== 'temperature' && view !== 'rainfall' && view !== 'disease') {
+          r *= shade; g *= shade; b *= shade;
+        }
+
+        // Coastline rim — land tiles next to liquid get a bright sandy edge,
+        // making continent outlines legible from across the map.
+        if (alt[i] >= 0 && (alt[y*w+xL] < 0 || alt[y*w+xR] < 0 || alt[yU*w+x] < 0 || alt[yD*w+x] < 0)) {
+          r = Math.min(255, r + 32);
+          g = Math.min(255, g + 26);
+          b = Math.min(255, b + 14);
+        }
+
+        data[pi]     = r < 0 ? 0 : r > 255 ? 255 : r;
+        data[pi + 1] = g < 0 ? 0 : g > 255 ? 255 : g;
+        data[pi + 2] = b < 0 ? 0 : b > 255 ? 255 : b;
         data[pi + 3] = 255;
       }
     }
 
-    // Create offscreen canvas for terrain
     const offscreen = document.createElement('canvas');
     offscreen.width = w;
     offscreen.height = h;
@@ -2400,25 +2424,159 @@ class Renderer {
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(this.terrainBuffer, 0, 0);
 
-    // Draw creatures
+    // Draw creatures. The renderer picks between three modes based on the
+    // effective on-screen pixel size of a tile, so the map stays readable
+    // whether you're looking at the whole planet or a single hillside.
+    //   tiny  (<3 CSS px / tile): single-pixel dots, just population colour
+    //   small (3–10 CSS px / tile): rectangles tinted by body plan, size by mass
+    //   shape (>=10 CSS px / tile): diet-shaped icons with halos for state
+    //                                (sick, pregnant, juvenile, etc.)
     if (this.showCreatures) {
+      const effPx = s / Math.max(1, this.dpr || 1);
       const diseaseView = (this.viewMode === 'disease');
-      for (const c of this.sim.creatures) {
-        if (!c.alive) continue;
-        if (diseaseView) {
-          // Infection lens: sick = magenta, immune = cyan, healthy = grey.
-          ctx.fillStyle = c.infected ? '#ff3df0' : (c.resistant ? '#40e0d0' : '#556');
-        } else {
-          const sp = this.sim.speciesMap.get(c.speciesId);
-          ctx.fillStyle = sp ? `rgb(${sp.color[0]},${sp.color[1]},${sp.color[2]})` : '#fff';
+      // Cull off-screen creatures: compute visible tile bounds in tile coords.
+      const invS = 1 / s;
+      const visX0 = -this.viewPanX * invS - this.offsetX * invS - 1;
+      const visX1 = (this.canvas.width - this.offsetX - this.viewPanX) * invS + 1;
+      const visY0 = -this.viewPanY * invS - this.offsetY * invS - 1;
+      const visY1 = (this.canvas.height - this.offsetY - this.viewPanY) * invS + 1;
+      // World wraps horizontally — keep things simple and only cull on Y.
+      // (At normal zoom levels almost everything is visible anyway.)
+      const cullY = (this.viewZoom > 1.5);
+
+      if (effPx < 3) {
+        // ---- Tiny mode: 1 px dot per creature. -------------------------
+        for (const c of this.sim.creatures) {
+          if (!c.alive) continue;
+          if (cullY && (c.y < visY0 || c.y > visY1)) continue;
+          if (diseaseView) {
+            ctx.fillStyle = c.infected ? '#ff3df0' : (c.resistant ? '#40e0d0' : '#888');
+          } else {
+            const sp = this.sim.speciesMap.get(c.speciesId);
+            ctx.fillStyle = sp ? `rgb(${sp.color[0]},${sp.color[1]},${sp.color[2]})` : '#fff';
+          }
+          // Half-tile dot keeps the densest tiles legible without strobing.
+          ctx.fillRect(c.x + 0.25, c.y + 0.25, 0.5, 0.5);
         }
-        const size = Math.max(0.3, Math.min(0.9, c.pheno.bodySize / 5));
-        const off = (1 - size) / 2;
-        ctx.fillRect(c.x + off, c.y + off, size, size);
-        // Juveniles get a faint dimming so growth is visible on the map.
-        if (!diseaseView && c.age < c.pheno.maturityAge) {
-          ctx.fillStyle = 'rgba(0,0,0,0.35)';
+      } else if (effPx < 10) {
+        // ---- Small mode: tinted rectangles scaled by body mass. --------
+        for (const c of this.sim.creatures) {
+          if (!c.alive) continue;
+          if (cullY && (c.y < visY0 || c.y > visY1)) continue;
+          if (visX0 > -CFG.W && (c.x < visX0 || c.x > visX1)) continue;
+          let fill;
+          if (diseaseView) {
+            fill = c.infected ? '#ff3df0' : (c.resistant ? '#40e0d0' : '#666');
+          } else {
+            const sp = this.sim.speciesMap.get(c.speciesId);
+            const col = sp ? sp.color : [255, 255, 255];
+            // Body-plan tint: aquatic creatures pick up a cool blue cast,
+            // terrestrial keep their species colour, amphibians sit between.
+            const aq = c.pheno.aquatic;
+            const r = col[0] * (1 - aq * 0.4) + aq * 40;
+            const g = col[1] * (1 - aq * 0.15) + aq * 80;
+            const b = col[2] * (1 - aq * 0.05) + aq * 130;
+            fill = `rgb(${r|0},${g|0},${b|0})`;
+          }
+          ctx.fillStyle = fill;
+          const size = 0.35 + Math.min(0.55, c.pheno.bodySize / 6);
+          const off = (1 - size) / 2;
           ctx.fillRect(c.x + off, c.y + off, size, size);
+          // Juveniles dimmed; infected creatures get a tiny pink dot.
+          if (!diseaseView && c.age < maturityOf(c)) {
+            ctx.fillStyle = 'rgba(0,0,0,0.40)';
+            ctx.fillRect(c.x + off, c.y + off, size, size);
+          }
+          if (!diseaseView && c.infected) {
+            ctx.fillStyle = '#ff3df0';
+            ctx.fillRect(c.x + off, c.y + off, size * 0.25, size * 0.25);
+          }
+        }
+      } else {
+        // ---- Shape mode: diet-coded icons with rich status overlays. ---
+        // Herbivore = circle, carnivore = triangle, omnivore = diamond.
+        // Aquatic creatures get a horizontal "fin" stripe.
+        // Pregnant females show a yellow dot; infected creatures a pink halo;
+        // adults get a thin species-colour outline.
+        for (const c of this.sim.creatures) {
+          if (!c.alive) continue;
+          if (cullY && (c.y < visY0 - 1 || c.y > visY1 + 1)) continue;
+          if (visX0 > -CFG.W && (c.x < visX0 - 1 || c.x > visX1 + 1)) continue;
+          const sp = this.sim.speciesMap.get(c.speciesId);
+          const col = sp ? sp.color : [255, 255, 255];
+          const aq = c.pheno.aquatic;
+          const r = (col[0] * (1 - aq * 0.4) + aq * 40) | 0;
+          const g = (col[1] * (1 - aq * 0.15) + aq * 90) | 0;
+          const b = (col[2] * (1 - aq * 0.05) + aq * 150) | 0;
+          const mature = c.age >= maturityOf(c);
+          const size = mature ? (0.4 + Math.min(0.55, c.pheno.bodySize / 5)) : 0.45;
+          const cx = c.x + 0.5, cy = c.y + 0.5;
+          const radius = size * 0.5;
+
+          // Infection halo behind the body so it reads through everything.
+          if (c.infected) {
+            ctx.fillStyle = 'rgba(255,61,240,0.55)';
+            ctx.beginPath();
+            ctx.arc(cx, cy, radius * 1.4, 0, Math.PI * 2);
+            ctx.fill();
+          } else if (c.resistant && diseaseView) {
+            ctx.fillStyle = 'rgba(64,224,208,0.55)';
+            ctx.beginPath();
+            ctx.arc(cx, cy, radius * 1.3, 0, Math.PI * 2);
+            ctx.fill();
+          }
+
+          ctx.fillStyle = diseaseView ? (c.infected ? '#ff3df0' : '#888')
+                                       : `rgb(${r},${g},${b})`;
+          ctx.beginPath();
+          if (c.pheno.diet < 0.4) {
+            // Herbivore — circle
+            ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+          } else if (c.pheno.diet > 0.6) {
+            // Carnivore — triangle pointing where it's heading (or up)
+            const dx = (c.targetX - c.x); const dy = (c.targetY - c.y);
+            const ang = (dx === 0 && dy === 0) ? -Math.PI / 2 : Math.atan2(dy, dx);
+            const p = (a) => [cx + Math.cos(ang + a) * radius, cy + Math.sin(ang + a) * radius];
+            const a = p(0);                       // nose
+            const b1 = p(2.4);                    // left tail
+            const b2 = p(-2.4);                   // right tail
+            ctx.moveTo(a[0], a[1]); ctx.lineTo(b1[0], b1[1]); ctx.lineTo(b2[0], b2[1]); ctx.closePath();
+          } else {
+            // Omnivore — diamond
+            ctx.moveTo(cx, cy - radius);
+            ctx.lineTo(cx + radius, cy);
+            ctx.lineTo(cx, cy + radius);
+            ctx.lineTo(cx - radius, cy);
+            ctx.closePath();
+          }
+          ctx.fill();
+
+          // Juveniles get a darker interior, so size attained vs target reads clearly.
+          if (!mature) {
+            ctx.fillStyle = 'rgba(0,0,0,0.45)';
+            ctx.fill();
+          }
+
+          // Adult outline: a thin species-colour ring so colonies group visually.
+          if (mature) {
+            ctx.lineWidth = 0.06;
+            ctx.strokeStyle = `rgb(${Math.min(255, col[0]+40)},${Math.min(255, col[1]+40)},${Math.min(255, col[2]+40)})`;
+            ctx.stroke();
+          }
+
+          // Aquatic stripe: a horizontal "fin" line so swimmers read at a glance.
+          if (aq > 0.5) {
+            ctx.fillStyle = 'rgba(255,255,255,0.5)';
+            ctx.fillRect(cx - radius * 0.7, cy - 0.04, radius * 1.4, 0.08);
+          }
+
+          // Pregnancy dot.
+          if (c.pregnant) {
+            ctx.fillStyle = '#ffd84d';
+            ctx.beginPath();
+            ctx.arc(cx + radius * 0.4, cy - radius * 0.4, radius * 0.22, 0, Math.PI * 2);
+            ctx.fill();
+          }
         }
       }
     }
@@ -2633,11 +2791,14 @@ class App {
       this.speed = parseInt(e.target.value);
     });
 
-    // View select
+    // View select — also refreshes the floating legend explaining the
+    // colour key for the chosen map view.
     document.getElementById('view-select').addEventListener('change', (e) => {
       this.renderer.viewMode = e.target.value;
       this.renderer.terrainDirty = true;
+      this.updateLegend();
     });
+    this.updateLegend();
 
     // Show creatures toggle
     document.getElementById('btn-creatures').addEventListener('click', (e) => {
@@ -2653,6 +2814,7 @@ class App {
       this.renderer.sim = this.sim;
       this.renderer.terrainDirty = true;
       this.renderer.resetView();
+      this.updateLegend();
     });
 
     // Switching planet without changing seed also regenerates the world —
@@ -2679,6 +2841,7 @@ class App {
       this.renderer.sim = this.sim;
       this.renderer.terrainDirty = true;
       this.renderer.resetView();
+      this.updateLegend();
     });
 
     // Sidebar toggle (+ mobile backdrop).
@@ -3073,6 +3236,73 @@ class App {
 
   /// Flash a banner when a fresh catastrophe occurs, then fade it.
   /// Show a transient hint after the user applies an interactive tool.
+  /// Render a tiny key explaining the active view's colour scheme.
+  updateLegend() {
+    const el = document.getElementById('map-legend');
+    if (!el) return;
+    const mode = this.renderer ? this.renderer.viewMode : 'biome';
+    const sw = (rgb) => `<span class="sw" style="background:rgb(${rgb})"></span>`;
+    let title = '', rows = [];
+    if (mode === 'biome') {
+      title = 'Biomes';
+      // List biomes that actually exist on this world (top eight) so the key
+      // matches what the user is looking at.
+      const counts = {};
+      for (let i = 0; i < this.sim.world.biome.length; i++) {
+        const id = this.sim.world.biome[i];
+        counts[id] = (counts[id] || 0) + 1;
+      }
+      const sorted = Object.entries(counts).map(([id, c]) => ({id:+id, c:+c}))
+        .sort((a, b) => b.c - a.c).slice(0, 8);
+      for (const {id} of sorted) {
+        const bi = BIOME_LIST[id];
+        rows.push(`<div class="row">${sw(bi.color.join(','))}<span>${bi.name}</span></div>`);
+      }
+      rows.push(`<div class="row" style="margin-top:4px;color:#a0a0c0">Creatures: <span style="color:#fff">●</span>herb <span style="color:#fff">▲</span>carn <span style="color:#fff">◆</span>omn</div>`);
+    } else if (mode === 'plants') {
+      title = 'Plant biomass';
+      rows.push(`<div class="row">${sw('25,32,40')}<span>bare / sparse</span></div>`);
+      rows.push(`<div class="row">${sw('80,150,60')}<span>moderate cover</span></div>`);
+      rows.push(`<div class="row">${sw('20,230,40')}<span>lush canopy</span></div>`);
+      rows.push(`<div class="row">${sw('18,40,90')}<span>marine algae</span></div>`);
+    } else if (mode === 'microbes') {
+      title = 'Microbial biomass';
+      rows.push(`<div class="row">${sw('30,20,40')}<span>scarce</span></div>`);
+      rows.push(`<div class="row">${sw('90,80,120')}<span>active</span></div>`);
+      rows.push(`<div class="row">${sw('150,140,200')}<span>thriving</span></div>`);
+    } else if (mode === 'altitude') {
+      title = 'Altitude';
+      rows.push(`<div class="row">${sw('18,28,95')}<span>deep ocean</span></div>`);
+      rows.push(`<div class="row">${sw('70,160,90')}<span>lowland</span></div>`);
+      rows.push(`<div class="row">${sw('150,120,55')}<span>highland</span></div>`);
+      rows.push(`<div class="row">${sw('220,220,230')}<span>snowy peak</span></div>`);
+    } else if (mode === 'temperature') {
+      title = 'Temperature (with season)';
+      rows.push(`<div class="row">${sw('0,80,255')}<span>cold (planet min)</span></div>`);
+      rows.push(`<div class="row">${sw('170,200,80')}<span>temperate</span></div>`);
+      rows.push(`<div class="row">${sw('255,60,0')}<span>hot (planet max)</span></div>`);
+    } else if (mode === 'rainfall') {
+      title = 'Rainfall';
+      rows.push(`<div class="row">${sw('30,50,80')}<span>arid</span></div>`);
+      rows.push(`<div class="row">${sw('40,160,180')}<span>moderate</span></div>`);
+      rows.push(`<div class="row">${sw('40,255,255')}<span>monsoon</span></div>`);
+    } else if (mode === 'carrion') {
+      title = 'Carrion';
+      rows.push(`<div class="row">${sw('25,18,18')}<span>none</span></div>`);
+      rows.push(`<div class="row">${sw('240,48,40')}<span>fresh kills</span></div>`);
+    } else if (mode === 'nutrients') {
+      title = 'Soil nutrients';
+      rows.push(`<div class="row">${sw('50,38,28')}<span>depleted</span></div>`);
+      rows.push(`<div class="row">${sw('100,160,40')}<span>fertile</span></div>`);
+    } else if (mode === 'disease') {
+      title = 'Disease lens';
+      rows.push(`<div class="row">${sw('136,136,136')}<span>healthy</span></div>`);
+      rows.push(`<div class="row">${sw('64,224,208')}<span>immune</span></div>`);
+      rows.push(`<div class="row">${sw('255,61,240')}<span>infected</span></div>`);
+    }
+    el.innerHTML = `<div class="title">${title}</div>${rows.join('')}`;
+  }
+
   flashTool(msg) {
     if (!msg) return;
     const el = document.getElementById('tool-hint');
