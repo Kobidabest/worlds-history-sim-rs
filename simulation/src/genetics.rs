@@ -275,11 +275,12 @@ impl Phenotype {
         temp >= self.cold_tolerance && temp <= self.heat_tolerance
     }
 
-    /// Energy cost per tick for basic metabolism. Larger animals and
-    /// less-efficient metabolisms burn more; photosynthesis reduces the
-    /// net cost because some energy is made on the spot.
+    /// Energy cost per tick for basic metabolism. Follows Kleiber's law:
+    /// metabolic demand scales with body-mass^0.75 rather than linearly, so
+    /// large animals are far more energy-efficient per unit mass — exactly as
+    /// observed across real organisms. Photosynthesis offsets the net cost.
     pub fn base_energy_cost(&self) -> f32 {
-        let raw = self.body_size * self.metabolic_rate * 0.3;
+        let raw = self.body_size.powf(0.75) * self.metabolic_rate * 0.3;
         raw * (1.0 - 0.4 * self.photosynthesis)
     }
 

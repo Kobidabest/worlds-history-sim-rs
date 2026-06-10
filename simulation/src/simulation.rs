@@ -221,6 +221,21 @@ impl Simulation {
     }
 
     /// Run one simulation tick.
+    /// Length of one orbital year in ticks (drives the seasonal cycle).
+    pub const YEAR_LENGTH: u64 = 1200;
+
+    /// Seasonal temperature offset for a latitude row. Northern and southern
+    /// hemispheres run opposite seasons; poles swing hardest, the equator
+    /// least. Amplitude scales with the planet's temperature span.
+    pub fn season_temp_offset(&self, y: usize) -> f32 {
+        let season = (self.tick % Self::YEAR_LENGTH) as f32 / Self::YEAR_LENGTH as f32;
+        let amp = self.world.planet.temperature_span * 0.10;
+        let h = self.config.world_height as f32;
+        let hemisphere = if (y as f32) < h / 2.0 { 1.0 } else { -1.0 };
+        let lat_weight = ((y as f32) - h / 2.0).abs() / (h / 2.0);
+        (season * std::f32::consts::TAU).sin() * amp * hemisphere * (0.3 + 0.7 * lat_weight)
+    }
+
     pub fn tick(&mut self) {
         self.tick += 1;
 
@@ -249,10 +264,11 @@ impl Simulation {
             // Move
             self.creatures[i].move_towards_target(width, height);
 
-            // Apply environmental stress
+            // Apply environmental stress — local temperature now includes the
+            // seasonal swing for this latitude.
             let x = self.creatures[i].x;
             let y = self.creatures[i].y;
-            let temp = self.world.terrain[y][x].temperature;
+            let temp = self.world.terrain[y][x].temperature + self.season_temp_offset(y);
             let rain = self.world.terrain[y][x].rainfall;
 
             self.creatures[i].apply_temperature_stress(temp);

@@ -118,6 +118,13 @@ impl Creature {
         let cost = self.phenotype.base_energy_cost();
         self.energy -= cost;
 
+        // Senescence: past ~70% of lifespan, condition declines steadily even
+        // with ample food — ageing is its own mortality pressure.
+        let age_frac = self.age as f32 / self.phenotype.max_age.max(1) as f32;
+        if age_frac > 0.7 {
+            self.health -= (age_frac - 0.7) * 0.02;
+        }
+
         // Reduce reproduction cooldown
         if self.reproduction_cooldown > 0 {
             self.reproduction_cooldown -= 1;

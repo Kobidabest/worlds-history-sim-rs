@@ -16,6 +16,9 @@ html,body{width:100%;height:100%;overflow:hidden;background:#1a1a2e;color:#e0e0e
 #toolbar .sep{width:1px;height:24px;background:#0f3460;flex-shrink:0}
 #toolbar label{font-size:12px;color:#a0a0c0}
 #toolbar span.stat{font-size:12px;color:#e94560;font-weight:600}
+#event-banner{display:none;padding:6px 12px;background:#3a1020;border-bottom:1px solid #e94560;color:#ffd0d8;font-size:12px;flex-shrink:0;z-index:9}
+#event-banner.show{display:block;animation:flash 0.6s ease}
+@keyframes flash{from{background:#e94560;color:#fff}to{background:#3a1020;color:#ffd0d8}}
 #main-area{flex:1;display:flex;position:relative;overflow:hidden}
 #canvas-wrap{flex:1;position:relative;overflow:hidden}
 canvas{display:block;image-rendering:pixelated}
@@ -107,6 +110,9 @@ canvas{display:block;image-rendering:pixelated}
       <option value="altitude">Altitude</option>
       <option value="temperature">Temperature</option>
       <option value="rainfall">Rainfall</option>
+      <option value="carrion">Carrion</option>
+      <option value="nutrients">Nutrients</option>
+      <option value="disease">Disease</option>
     </select>
     <div class="sep"></div>
     <button id="btn-creatures" class="active" aria-label="Toggle creature rendering">Creatures</button>
@@ -117,9 +123,12 @@ canvas{display:block;image-rendering:pixelated}
     <span class="stat">T:<span id="stat-tick">0</span></span>
     <span class="stat">Pop:<span id="stat-pop">0</span></span>
     <span class="stat">Sp:<span id="stat-species">0</span></span>
+    <span class="stat" title="Season">❄<span id="stat-season">—</span></span>
+    <span class="stat" title="Infected">🦠<span id="stat-infected">0</span></span>
     <div class="sep"></div>
     <button id="btn-new">New</button>
   </div>
+  <div id="event-banner"></div>
   <div id="main-area">
     <div id="canvas-wrap">
       <canvas id="world-canvas"></canvas>
@@ -168,11 +177,23 @@ const CFG = {
   SPECIATION_INTERVAL: 50,
   SNAPSHOT_INTERVAL: 10,
   MAX_SNAPSHOTS: 500,
-  NUM_GENES: 22,
+  NUM_GENES: 26,
   MUTATION_RATE: 0.08,
   MUTATION_AMOUNT: 0.15,
   BLEND_CHANCE: 0.3,
-  TILE_SIZE: 4
+  TILE_SIZE: 4,
+  // --- Realism systems -------------------------------------------------
+  YEAR_LENGTH: 1200,        // ticks per orbital year (seasonal cycle)
+  METABOLIC_EXPONENT: 0.75, // Kleiber's law: metabolism scales as mass^0.75
+  CARRION_FRACTION: 0.55,   // fraction of body mass left as edible carrion on death
+  CARRION_DECAY: 0.04,      // per-tick carrion rot rate
+  CARRION_TO_NUTRIENT: 0.5, // fraction of rotted carrion that enriches the soil
+  NUTRIENT_DECAY: 0.01,     // per-tick nutrient leaching
+  NUTRIENT_GROWTH_BOOST: 1.5, // max multiplier to plant growth from rich soil
+  DISEASE_BASE_RATE: 0.00002, // spontaneous infection chance per crowded creature
+  DISEASE_SPREAD: 0.12,     // base per-contact transmission
+  DISEASE_DURATION: 60,     // ticks an infection lasts before recovery/death
+  CATASTROPHE_RATE: 0.00035 // per-tick chance of a planet-scale catastrophe
 };
 
 // Gene indices
@@ -182,7 +203,8 @@ const G = {
   LONGEVITY:8, FERTILITY:9, OFFSPRING:10, EFFICIENCY:11,
   WATER_NEED:12, LEG_STRENGTH:13,
   RAD_TOL:14, TOX_TOL:15, PRESS_TOL:16, PHOTOSYN:17,
-  MATURITY:18, ARMOR:19, VENOM:20, PACK:21
+  MATURITY:18, ARMOR:19, VENOM:20, PACK:21,
+  IMMUNITY:22, DISPLAY:23, SCAVENGE:24, METABOLISM:25
 };
 
 const GENE_NAMES = [
@@ -191,7 +213,8 @@ const GENE_NAMES = [
   "Longevity","Fertility","Offspring Count","Efficiency",
   "Water Need","Leg Strength",
   "Radiation Tolerance","Toxic Tolerance","Pressure Tolerance","Photosynthesis",
-  "Maturity Age","Armor","Venom","Pack Instinct"
+  "Maturity Age","Armor","Venom","Pack Instinct",
+  "Immunity","Display","Scavenging","Metabolism"
 ];
 
 // ============================================================
@@ -514,6 +537,8 @@ function expressGene(genes) {
     diet:         genes[G.DIET],
     coldTol:      -35 + genes[G.COLD_TOL] * 40,
     heatTol:      -5 + genes[G.HEAT_TOL] * 35,
+    coldGene:     genes[G.COLD_TOL],   // raw 0..1, mapped to the planet's range in stress
+    heatGene:     genes[G.HEAT_TOL],
     camouflage:   genes[G.CAMOUFLAGE],
     aggression:   genes[G.AGGRESSION],
     maxAge:       50 + genes[G.LONGEVITY] * 450,
@@ -531,7 +556,14 @@ function expressGene(genes) {
     maturityAge:  Math.round(5 + (genes[G.MATURITY] || 0) * 45),
     armor:        genes[G.ARMOR] || 0,    // 0..1, reduces incoming damage
     venom:        genes[G.VENOM] || 0,    // 0..1, hurts attackers
-    pack:         genes[G.PACK]  || 0     // 0..1, gain when grouped
+    pack:         genes[G.PACK]  || 0,    // 0..1, gain when grouped
+    // --- realism traits ---
+    immunity:     genes[G.IMMUNITY] || 0, // 0..1, resists & clears disease
+    display:      genes[G.DISPLAY]  || 0, // 0..1, sexual ornament; attracts mates, attracts predators
+    scavenge:     genes[G.SCAVENGE] || 0, // 0..1, efficiency feeding on carrion
+    // Metabolic tempo: fast burners are quicker & breed sooner but starve
+    // faster; slow burners are hardy and frugal. Centered near 1.0.
+    metabolism:   0.6 + (genes[G.METABOLISM] !== undefined ? genes[G.METABOLISM] : 0.5) * 0.9
   };
 }
 
@@ -576,6 +608,24 @@ function randomGenome(rng, base, variance) {
     g[i] = Math.max(0, Math.min(1, base[i] + rng.range(-variance, variance)));
   }
   return g;
+}
+
+// Pre-adapt a founding lineage's climate & planetary-tolerance genes to the
+// world it's seeded on, so colonists aren't all instantly killed by the
+// ambient conditions. Real founder populations are already broadly suited to
+// their environment; selection then refines them. Mutates `base` in place.
+function adaptBaseToPlanet(base, planet, rng) {
+  // Thermal tolerance is now expressed relative to the planet's own range
+  // (see the stress step), so founders just need to be broad generalists that
+  // span their world: cold-hardy at the low edge, heat-hardy at the high edge.
+  base[G.COLD_TOL] = rng.range(0.1, 0.3);  // low gene ⇒ tolerates the cold edge
+  base[G.HEAT_TOL] = rng.range(0.7, 0.9);  // high gene ⇒ tolerates the hot edge
+  base[G.RAD_TOL]  = Math.max(0, Math.min(1, planet.radiation * 0.8 + rng.range(0, 0.25)));
+  base[G.TOX_TOL]  = Math.max(0, Math.min(1, planet.toxicity * 0.7 + rng.range(0, 0.3)));
+  const pNorm = Math.max(0, Math.min(1, planet.gravity / 3));
+  base[G.PRESS_TOL] = Math.max(0, Math.min(1, pNorm * 0.7 + rng.range(0, 0.3)));
+  if (planet.oceanFrac < 0.2) base[G.WATER_NEED] = rng.range(0.5, 0.9); // drought-adapted
+  base[G.IMMUNITY] = rng.range(0.3, 0.6); // founders carry a baseline immune system
 }
 
 function dietLabel(d) {
@@ -650,6 +700,15 @@ class Creature {
     this.moveTimer = 0;
     this.state = STATE.WANDER;
     this.lastAttackerId = -1; // for venom retaliation tracking
+    // --- realism state ---
+    this.infected = false;    // currently carrying a disease
+    this.infectTimer = 0;     // ticks remaining in the current infection
+    this.resistant = false;   // acquired immunity after surviving an infection
+    this.pregnant = false;    // females gestate before giving birth
+    this.gestation = 0;       // ticks remaining until birth
+    this.matePheno = null;    // father's genome, stored at conception
+    this.mateGenes = null;
+    this.deathCause = null;   // tagged when the creature dies, for stats/carrion
   }
 }
 // Symbol used in the UI for the creature's sex.
@@ -666,6 +725,11 @@ class TileEco {
     this.creatureCount = 0;
     this.herbCount = 0;
     this.carnCount = 0;
+    // --- nutrient cycle ---
+    // Carcasses pile up here when creatures die and are eaten by scavengers
+    // or rot down into soil nutrients that fertilise plant regrowth.
+    this.carrion = 0;
+    this.nutrients = 0;
   }
 }
 
@@ -686,9 +750,36 @@ class Simulation {
     this.history = []; // population snapshots
     this.paused = false;
     this.selectedTile = null;
+    // --- realism systems ---
+    this.season = 0;            // 0..1 phase through the orbital year
+    this.seasonName = "Spring";
+    this.climateShift = 0;      // transient global temperature offset (catastrophes)
+    this.events = [];           // recent catastrophe log {tick, name, desc}
+    this.infectedCount = 0;
+    this.stats = { births: 0, starved: 0, predated: 0, aged: 0, disease: 0, cold: 0 };
 
     this.initEcosystem();
     this.initCreatures();
+  }
+
+  /// Global seasonal temperature offset for a given latitude row.
+  /// Northern and southern hemispheres run opposite seasons; the equator
+  /// barely changes. Amplitude scales with the planet's temperature span.
+  seasonalTempOffset(y) {
+    const amp = this.planet.tempSpan * 0.10;
+    const hemisphere = (y < CFG.H / 2) ? 1 : -1;
+    // Latitude weighting: poles swing hardest, equator least.
+    const latWeight = Math.abs(y - CFG.H / 2) / (CFG.H / 2);
+    return Math.sin(this.season * Math.PI * 2) * amp * hemisphere * (0.3 + 0.7 * latWeight)
+      + this.climateShift;
+  }
+
+  /// Seasonal multiplier on plant productivity for a latitude row (~0.6..1.4).
+  seasonalGrowthMul(y) {
+    const hemisphere = (y < CFG.H / 2) ? 1 : -1;
+    const phase = Math.sin(this.season * Math.PI * 2) * hemisphere;
+    const latWeight = Math.abs(y - CFG.H / 2) / (CFG.H / 2);
+    return 1 + phase * 0.35 * (0.3 + 0.7 * latWeight) - this.climateShift * 0.008;
   }
 
   initEcosystem() {
@@ -715,6 +806,7 @@ class Simulation {
     for (let s = 0; s < CFG.INIT_HERB_SPECIES; s++) {
       const base = new Float32Array(CFG.NUM_GENES);
       for (let g = 0; g < CFG.NUM_GENES; g++) base[g] = this.rng.range(0.2, 0.8);
+      adaptBaseToPlanet(base, this.planet, this.rng);
       base[G.DIET] = this.rng.range(0.0, 0.30);  // herbivore
       base[G.AGGRESSION] = this.rng.range(0.0, 0.3);
 
@@ -740,6 +832,7 @@ class Simulation {
     for (let s = 0; s < CFG.INIT_CARN_SPECIES; s++) {
       const base = new Float32Array(CFG.NUM_GENES);
       for (let g = 0; g < CFG.NUM_GENES; g++) base[g] = this.rng.range(0.2, 0.8);
+      adaptBaseToPlanet(base, this.planet, this.rng);
       base[G.DIET] = this.rng.range(0.70, 1.0); // carnivore
       base[G.AGGRESSION] = this.rng.range(0.5, 1.0);
       base[G.SPEED] = this.rng.range(0.4, 0.9);
@@ -790,6 +883,9 @@ class Simulation {
     const ph = c.pheno;
     const wantPlant = !isCarnivore(ph);
     const wantMeat = !isHerbivore(ph);
+    // Anything that isn't a pure herbivore, or that has a scavenging streak,
+    // will detour for a free meal of carrion.
+    const wantCarrion = wantMeat || ph.scavenge > 0.25;
     const sr = Math.min(8, Math.ceil(ph.senseRange));
     let best = null, bestScore = 0.5;
     for (let dy = -sr; dy <= sr; dy++) {
@@ -800,11 +896,12 @@ class Simulation {
         const idx = ny * CFG.W + nx;
         let score = 0;
         if (wantPlant) score += this.ecosystem[idx].plantBiomass * (wantMeat ? 0.4 : 1.0);
+        if (wantCarrion) score += this.ecosystem[idx].carrion * (1 + ph.scavenge * 2);
         if (wantMeat && this.spatialGrid) {
           const cell = this.spatialGrid.get(idx);
           if (cell) for (const oi of cell) {
             const o = this.creatures[oi];
-            if (!o.alive || o === c) continue;
+            if (!o || !o.alive || o === c) continue;
             // Hunters target prey at most 1.5x their size.
             if (o.pheno.bodySize <= ph.bodySize * 1.5) {
               score += o.pheno.bodySize * (wantPlant ? 2 : 6);
@@ -834,7 +931,7 @@ class Simulation {
         if (!cell) continue;
         for (const oi of cell) {
           const o = this.creatures[oi];
-          if (!o.alive || o === c) continue;
+          if (!o || !o.alive || o === c) continue;
           if (o.speciesId === c.speciesId) continue;
           if (!isCarnivore(o.pheno)) continue;
           if (o.pheno.bodySize < c.pheno.bodySize * 1.1) continue;
@@ -853,10 +950,14 @@ class Simulation {
   }
 
   /// Find a same-species, opposite-sex, breeding-ready partner in range.
+  /// Females (sex 0) exercise mate choice — sexual selection — preferring
+  /// healthy, well-fed, ornamented partners even at some distance. Males
+  /// just head for the nearest available female.
   findNearestMate(c) {
     if (!this.spatialGrid) return null;
     const sr = Math.min(8, Math.ceil(c.pheno.senseRange));
-    let nearest = null, bestDist = Infinity;
+    const choosy = (c.sex === 0); // the choosing sex
+    let best = null, bestScore = -Infinity, bestDist = Infinity;
     for (let dy = -sr; dy <= sr; dy++) {
       const ny = c.y + dy;
       if (ny < 0 || ny >= CFG.H) continue;
@@ -866,17 +967,25 @@ class Simulation {
         if (!cell) continue;
         for (const oi of cell) {
           const o = this.creatures[oi];
-          if (!o.alive || o === c) continue;
+          if (!o || !o.alive || o === c) continue;
           if (o.speciesId !== c.speciesId) continue;
           if (o.sex === c.sex) continue;
           if (!isMature(o) || o.breedCooldown > 0) continue;
           if (o.energy < o.pheno.fertility * 0.7) continue;
           const dist = Math.abs(dx) + Math.abs(dy);
-          if (dist < bestDist) { bestDist = dist; nearest = [nx, ny]; }
+          if (choosy) {
+            // Quality = condition + ornament + vigour, discounted by distance.
+            const quality = o.health * 1.5 + o.pheno.display * 2.0
+              + (o.energy / (o.pheno.fertility + 1)) * 0.5
+              + o.pheno.bodySize * 0.1 - dist * 0.15;
+            if (quality > bestScore) { bestScore = quality; best = [nx, ny]; }
+          } else if (dist < bestDist) {
+            bestDist = dist; best = [nx, ny];
+          }
         }
       }
     }
-    return nearest;
+    return best;
   }
 
   /// Combat multiplier from same-species adults on the same and
@@ -894,7 +1003,7 @@ class Simulation {
       if (!cell) continue;
       for (const oi of cell) {
         const o = this.creatures[oi];
-        if (!o.alive || o === c) continue;
+        if (!o || !o.alive || o === c) continue;
         if (o.speciesId === c.speciesId && isMature(o)) allies++;
       }
     }
@@ -938,8 +1047,125 @@ class Simulation {
     c.state = STATE.WANDER;
   }
 
+  /// Begin an infection in a creature unless it is already sick or resistant.
+  infect(c) {
+    if (c.infected || c.resistant) return;
+    if (this.rng.chance(c.pheno.immunity * 0.8)) return; // immune system blocks it
+    c.infected = true;
+    c.infectTimer = Math.floor(CFG.DISEASE_DURATION * (1 - c.pheno.immunity * 0.5));
+  }
+
+  /// Spread disease between co-located creatures and spark new outbreaks in
+  /// dense populations. Crowding drives epidemics — a realistic density check.
+  spreadDisease() {
+    let infected = 0;
+    for (const [, cell] of this.spatialGrid) {
+      if (cell.length < 2) {
+        // Still let solitary infected creatures count toward the tally.
+        for (const oi of cell) { const s = this.creatures[oi]; if (s && s.infected) infected++; }
+        continue;
+      }
+      // Spontaneous outbreak: more likely the denser the tile.
+      const density = cell.length;
+      for (const oi of cell) {
+        const c = this.creatures[oi];
+        if (!c || !c.alive) continue;
+        if (!c.infected && !c.resistant
+            && this.rng.chance(CFG.DISEASE_BASE_RATE * density * density)) {
+          this.infect(c);
+        }
+      }
+      // Contact transmission from each infected individual to tile-mates.
+      for (const oi of cell) {
+        const src = this.creatures[oi];
+        if (!src || !src.alive || !src.infected) continue;
+        for (const oj of cell) {
+          if (oj === oi) continue;
+          const t = this.creatures[oj];
+          if (!t || !t.alive || t.infected || t.resistant) continue;
+          if (this.rng.chance(CFG.DISEASE_SPREAD * (1 - t.pheno.immunity))) {
+            this.infect(t);
+          }
+        }
+      }
+      for (const oi of cell) { const s = this.creatures[oi]; if (s && s.infected) infected++; }
+    }
+    this.infectedCount = infected;
+  }
+
+  /// Rare planet-scale catastrophes that reshape selection — the punctuation
+  /// in "punctuated equilibrium". Each picks survivors differently.
+  maybeCatastrophe() {
+    if (this.tick < 200) return; // give life a chance to establish first
+    if (!this.rng.chance(CFG.CATASTROPHE_RATE)) return;
+    const kinds = ['impact', 'supervolcano', 'pandemic', 'heatwave', 'iceage'];
+    const kind = kinds[this.rng.int(0, kinds.length)];
+    let desc = '';
+    switch (kind) {
+      case 'impact': {
+        // Asteroid impact: regional annihilation + global cooling (dust).
+        const cx = this.rng.int(0, CFG.W), cy = this.rng.int(0, CFG.H);
+        const r = 18 + this.rng.int(0, 14);
+        let killed = 0;
+        for (const c of this.creatures) {
+          const dx = Math.min(Math.abs(c.x - cx), CFG.W - Math.abs(c.x - cx));
+          const dy = Math.abs(c.y - cy);
+          if (dx * dx + dy * dy < r * r && this.rng.chance(0.85)) {
+            c.alive = false; c.deathCause = 'impact'; killed++;
+          }
+        }
+        this.climateShift -= 12; // impact winter
+        desc = `Asteroid impact wiped out ${killed} creatures; an impact winter sets in.`;
+        break;
+      }
+      case 'supervolcano': {
+        this.climateShift -= 9;
+        let killed = 0;
+        for (const c of this.creatures) {
+          if (this.rng.chance(0.12)) { c.alive = false; c.deathCause = 'volcano'; killed++; }
+        }
+        desc = `A supervolcano blots out the sun — volcanic winter, ${killed} dead.`;
+        break;
+      }
+      case 'pandemic': {
+        let n = 0;
+        for (const c of this.creatures) {
+          if (!c.resistant && this.rng.chance(0.5)) { this.infect(c); n++; }
+        }
+        desc = `A virulent pandemic erupts, infecting ${n} creatures worldwide.`;
+        break;
+      }
+      case 'heatwave': {
+        this.climateShift += 11;
+        desc = `A runaway greenhouse pulse spikes global temperatures.`;
+        break;
+      }
+      case 'iceage': {
+        this.climateShift -= 11;
+        desc = `A glacial period descends; the world turns bitterly cold.`;
+        break;
+      }
+    }
+    this.events.unshift({ tick: this.tick, name: kind, desc });
+    if (this.events.length > 12) this.events.pop();
+  }
+
   step() {
     this.tick++;
+
+    // Phase 0: Advance the seasonal clock and decay any transient climate
+    // shock from a past catastrophe back toward zero.
+    this.season = (this.tick % CFG.YEAR_LENGTH) / CFG.YEAR_LENGTH;
+    const sphase = Math.sin(this.season * Math.PI * 2);
+    this.seasonName = sphase > 0.4 ? "Summer" : sphase < -0.4 ? "Winter"
+      : (this.season < 0.5 ? "Spring" : "Autumn");
+    if (this.climateShift !== 0) this.climateShift *= 0.985;
+    if (Math.abs(this.climateShift) < 0.05) this.climateShift = 0;
+    this.maybeCatastrophe();
+
+    // Build the spatial index up front so movement/sensing in Phase 1 query a
+    // grid whose indices match the current (post-cull) creatures array.
+    this.buildSpatialGrid();
 
     // Phase 1: Movement & metabolism
     for (const c of this.creatures) {
@@ -974,17 +1200,29 @@ class Simulation {
           c.y = newY;
         }
 
-        // Movement energy cost
-        c.energy -= c.pheno.bodySize * c.pheno.speed * 0.15;
+        // Movement energy cost — heavier, faster bodies pay more, and
+        // high gravity makes every step costlier.
+        c.energy -= c.pheno.bodySize * c.pheno.speed * 0.15
+          * (0.6 + 0.4 * this.planet.gravity);
       }
 
-      // Environmental stress
-      const temp = this.world.temperature[c.y * CFG.W + c.x];
-      if (temp < c.pheno.coldTol) {
-        c.health -= Math.abs(temp - c.pheno.coldTol) / 20 * 0.05;
+      // Environmental stress — local temperature now includes the season.
+      // Thermal tolerance is expressed relative to the planet's own range, so
+      // life can evolve to inhabit a −90 °C cryoworld or a +60 °C hothouse
+      // just as readily as a temperate one (real extremophiles do exactly this).
+      const temp = this.world.temperature[c.y * CFG.W + c.x]
+        + this.seasonalTempOffset(c.y);
+      const pMin = this.planet.meanTemp - this.planet.tempSpan * 0.5;
+      const pMax = this.planet.meanTemp + this.planet.tempSpan * 0.5;
+      const coldTolEff = pMin - 6 + c.pheno.coldGene * 26; // low gene ⇒ cold-hardy
+      const heatTolEff = pMax + 6 - (1 - c.pheno.heatGene) * 26; // high gene ⇒ heat-hardy
+      if (temp < coldTolEff) {
+        c.health -= Math.abs(temp - coldTolEff) / 20 * 0.05;
+        if (c.health <= 0) c.deathCause = 'cold';
       }
-      if (temp > c.pheno.heatTol) {
-        c.health -= (temp - c.pheno.heatTol) / 20 * 0.05;
+      if (temp > heatTolEff) {
+        c.health -= (temp - heatTolEff) / 20 * 0.05;
+        if (c.health <= 0) c.deathCause = 'heat';
       }
 
       // Drought stress
@@ -994,9 +1232,17 @@ class Simulation {
         c.health -= (waterNeedScaled - rain) / 500 * 0.02;
       }
 
-      // Base metabolism — photosynthesis reduces the net cost.
-      c.energy -= c.pheno.bodySize * (2.0 - c.pheno.efficiency) * 0.3
-        * (1 - 0.4 * c.pheno.photosyn);
+      // Base metabolism follows Kleiber's law: metabolic demand scales as
+      // body-mass^0.75, not linearly — so big animals are far more
+      // energy-efficient per kilo, exactly as in real ecosystems. The
+      // metabolism gene sets each lineage's tempo, photosynthesis offsets it.
+      const massCost = Math.pow(c.pheno.bodySize, CFG.METABOLIC_EXPONENT);
+      c.energy -= massCost * (2.0 - c.pheno.efficiency) * 0.3
+        * c.pheno.metabolism * (1 - 0.4 * c.pheno.photosyn);
+
+      // Sexual ornaments are metabolically expensive to grow and maintain.
+      if (c.pheno.display > 0.05) c.energy -= c.pheno.display * 0.25;
+
       c.age++;
 
       // Planetary pressures — the real point of running on an alien world.
@@ -1024,15 +1270,38 @@ class Simulation {
       if (P.gravity > 1.0) {
         c.energy -= (P.gravity - 1.0) * c.pheno.bodySize * 0.08;
       }
-      // Passive photosynthesis — scaled by the star's output.
+      // Passive photosynthesis — scaled by the star's output and the season.
       if (c.pheno.photosyn > 0.05) {
-        c.energy += c.pheno.photosyn * P.solar * 0.4;
+        c.energy += c.pheno.photosyn * P.solar * 0.4
+          * Math.max(0.2, this.seasonalGrowthMul(c.y));
+      }
+
+      // Disease progression: infections drain health, then resolve. A strong
+      // immune system shortens them and improves the odds of recovery.
+      if (c.infected) {
+        c.health -= 0.012 * (1 - c.pheno.immunity * 0.6);
+        c.energy -= 0.3;
+        c.infectTimer--;
+        if (c.infectTimer <= 0) {
+          // Survived: clear the infection and gain lasting resistance.
+          c.infected = false;
+          c.resistant = true;
+        }
+        if (c.health <= 0) c.deathCause = 'disease';
+      }
+
+      // Senescence: past ~70% of lifespan, mortality hazard climbs steeply
+      // even with full health — nothing lives forever.
+      const ageFrac = c.age / c.pheno.maxAge;
+      if (ageFrac > 0.7) {
+        const hazard = (ageFrac - 0.7) * 0.03;
+        if (this.rng.chance(hazard)) { c.health = 0; c.deathCause = 'aged'; }
       }
 
       // Death checks
-      if (c.age > c.pheno.maxAge || c.energy <= 0 || c.health <= 0) {
-        c.alive = false;
-      }
+      if (c.age > c.pheno.maxAge) { c.alive = false; if (!c.deathCause) c.deathCause = 'aged'; }
+      else if (c.energy <= 0) { c.alive = false; c.deathCause = 'starved'; }
+      else if (c.health <= 0) { c.alive = false; if (!c.deathCause) c.deathCause = 'environment'; }
 
       if (c.breedCooldown > 0) c.breedCooldown--;
     }
@@ -1056,12 +1325,30 @@ class Simulation {
       else { eco.herbCount += 0.5; eco.carnCount += 0.5; }
     }
 
-    // Plant growth (logistic)
+    // Plant growth (logistic), modulated by season and by soil nutrients
+    // recycled from decomposed carcasses, plus the carrion/nutrient cycle.
     for (let i = 0; i < this.ecosystem.length; i++) {
       const eco = this.ecosystem[i];
+      const y = (i / CFG.W) | 0;
+      // Carrion rots: part feeds the soil, the rest is lost to the air.
+      if (eco.carrion > 0) {
+        const rotted = eco.carrion * CFG.CARRION_DECAY;
+        eco.carrion -= rotted;
+        eco.nutrients += rotted * CFG.CARRION_TO_NUTRIENT;
+        if (eco.carrion < 0.01) eco.carrion = 0;
+      }
+      if (eco.nutrients > 0) eco.nutrients *= (1 - CFG.NUTRIENT_DECAY);
       if (eco.maxBiomass > 0) {
-        const growth = eco.growthRate * (1 - eco.plantBiomass / eco.maxBiomass) * eco.maxBiomass * 0.02;
-        eco.plantBiomass = Math.min(eco.maxBiomass, eco.plantBiomass + growth);
+        const seasonMul = Math.max(0.1, this.seasonalGrowthMul(y));
+        // Rich soil boosts regrowth up to NUTRIENT_GROWTH_BOOST.
+        const nutrientMul = 1 + Math.min(CFG.NUTRIENT_GROWTH_BOOST - 1,
+          eco.nutrients / (eco.maxBiomass + 1));
+        const growth = eco.growthRate * (1 - eco.plantBiomass / eco.maxBiomass)
+          * eco.maxBiomass * 0.02 * seasonMul * nutrientMul;
+        if (growth > 0) {
+          eco.plantBiomass = Math.min(eco.maxBiomass, eco.plantBiomass + growth);
+          eco.nutrients = Math.max(0, eco.nutrients - growth * 0.15);
+        }
       }
     }
 
@@ -1076,6 +1363,17 @@ class Simulation {
         const consumed = Math.min(maxIntake, eco.plantBiomass);
         eco.plantBiomass -= consumed;
         c.energy += consumed * (1 - c.pheno.diet) * 0.8;
+      }
+
+      // Scavenging: feed on carrion lying on this tile. Anything carnivorous
+      // can, but dedicated scavengers extract far more from a carcass.
+      if (eco.carrion > 0 && (c.pheno.diet > 0.2 || c.pheno.scavenge > 0.25)) {
+        const eff = 0.3 + c.pheno.scavenge * 0.9;
+        const maxIntake = c.pheno.bodySize * 2.5 * eff;
+        const consumed = Math.min(maxIntake, eco.carrion);
+        eco.carrion -= consumed;
+        c.energy += consumed * eff;
+        if (c.state !== undefined) c.activityNote = 'scavenging';
       }
 
       // Carnivore hunting
@@ -1111,6 +1409,14 @@ class Simulation {
                 const foodValue = prey.pheno.bodySize * 12.0;
                 c.energy += foodValue * c.pheno.diet;
                 prey.alive = false;
+                prey.deathCause = 'predated';
+                this.stats.predated++;
+                // Predator transmits disease through the kill, and may catch
+                // a parasite load from infected prey.
+                if (prey.infected && !c.resistant
+                    && this.rng.chance(0.3 * (1 - c.pheno.immunity))) {
+                  this.infect(c);
+                }
                 if (prey.pheno.venom > 0.05) {
                   c.health -= prey.pheno.venom * 0.3;
                   c.energy -= prey.pheno.venom * 4.0;
@@ -1130,42 +1436,68 @@ class Simulation {
       }
     }
 
-    // Phase 3: Reproduction. Sexual reproduction now requires both
-    // partners to be mature, opposite-sex, on the same tile, with energy
-    // above their personal fertility threshold and cooldown elapsed.
-    const newCreatures = [];
-    for (let i = 0; i < this.creatures.length && this.creatures.length + newCreatures.length < CFG.MAX_CREATURES; i++) {
-      const c = this.creatures[i];
-      if (!c.alive || !isMature(c) || c.breedCooldown > 0 || c.energy < c.pheno.fertility) continue;
+    // Phase 2d: Disease spread. Infections jump between creatures sharing a
+    // tile, and arise spontaneously where crowding is high — a built-in,
+    // density-dependent check on overpopulation that selects for immunity.
+    this.spreadDisease();
 
-      // Find mate on same tile
-      const key = c.y * CFG.W + c.x;
-      const tileCreatures = this.spatialGrid.get(key);
+    // Phase 3a: Conception. A receptive female pairs with the best available
+    // male on her tile (mate choice already steered her there) and becomes
+    // pregnant, storing the father's genes to combine at birth.
+    for (let i = 0; i < this.creatures.length; i++) {
+      const c = this.creatures[i];
+      if (!c.alive || c.sex !== 0) continue;               // only females gestate
+      if (c.pregnant || !isMature(c) || c.breedCooldown > 0) continue;
+      if (c.energy < c.pheno.fertility * 0.85) continue;
+
+      const tileCreatures = this.spatialGrid.get(c.y * CFG.W + c.x);
       if (!tileCreatures) continue;
 
-      let mate = null;
+      let mate = null, bestQ = -Infinity;
       for (const idx of tileCreatures) {
         const m = this.creatures[idx];
-        if (m === c || !m.alive) continue;
+        if (!m || m === c || !m.alive || m.sex === 0) continue;
         if (m.speciesId !== c.speciesId) continue;
-        if (m.sex === c.sex) continue; // sexual reproduction needs both sexes
-        if (!isMature(m) || m.breedCooldown > 0 || m.energy < m.pheno.fertility) continue;
-        mate = m;
-        break;
+        if (!isMature(m) || m.breedCooldown > 0 || m.energy < m.pheno.fertility * 0.5) continue;
+        // Female prefers the fittest, most ornamented suitor present.
+        const q = m.health * 1.5 + m.pheno.display * 2 + m.pheno.bodySize * 0.1;
+        if (q > bestQ) { bestQ = q; mate = m; }
       }
       if (!mate) continue;
 
-      const avgOffspring = Math.round((c.pheno.offspringCnt + mate.pheno.offspringCnt) / 2);
+      c.pregnant = true;
+      c.mateGenes = mate.genes;
+      // Gestation scales with lifespan: long-lived K-strategists invest
+      // more time per litter than short-lived r-strategists.
+      c.gestation = Math.floor(5 + c.pheno.maxAge / 20);
+      c.breedCooldown = Math.floor(10 + c.pheno.maxAge / 12);
+      mate.breedCooldown = Math.floor(6 + mate.pheno.maxAge / 14);
+      mate.energy -= mate.pheno.fertility * 0.1; // courtship/mating cost
+    }
+
+    // Phase 3b: Gestation & live birth.
+    const newCreatures = [];
+    for (let i = 0; i < this.creatures.length; i++) {
+      const c = this.creatures[i];
+      if (!c.alive || !c.pregnant) continue;
+      c.gestation--;
+      // Gestation is metabolically costly; a starving mother miscarries.
+      c.energy -= c.pheno.fertility * 0.02;
+      if (c.energy < c.pheno.fertility * 0.25) { c.pregnant = false; c.mateGenes = null; continue; }
+      if (c.gestation > 0) continue;
+
+      const fatherGenes = c.mateGenes || c.genes;
+      const litter = Math.round((c.pheno.offspringCnt
+        + expressGene(fatherGenes).offspringCnt) / 2);
       const costPer = c.pheno.fertility * 0.3;
-
-      for (let o = 0; o < avgOffspring && this.creatures.length + newCreatures.length < CFG.MAX_CREATURES; o++) {
-        const childGenes = crossover(c.genes, mate.genes, this.rng, this.planet.mutation);
-        // Random sex per offspring; siblings can be different sexes.
-        const child = new Creature(c.x, c.y, childGenes, c.speciesId,
-          this.rng.chance(0.5) ? 0 : 1);
+      for (let o = 0; o < litter && this.creatures.length + newCreatures.length < CFG.MAX_CREATURES; o++) {
+        const childGenes = crossover(c.genes, fatherGenes, this.rng, this.planet.mutation);
+        const child = new Creature(c.x, c.y, childGenes, c.speciesId, this.rng.chance(0.5) ? 0 : 1);
         child.energy = costPer * 0.8;
+        // Vertical disease transmission: an infected mother may pass it on.
+        if (c.infected && this.rng.chance(0.25 * (1 - child.pheno.immunity))) this.infect(child);
         newCreatures.push(child);
-
+        this.stats.births++;
         const sp = this.speciesMap.get(c.speciesId);
         if (sp) {
           sp.population++;
@@ -1173,17 +1505,26 @@ class Simulation {
           sp.generation = Math.max(sp.generation, Math.floor(c.age / c.pheno.maxAge * 10));
         }
       }
-
-      c.energy -= costPer * avgOffspring * 0.6;
-      mate.energy -= costPer * avgOffspring * 0.4;
-      c.breedCooldown = Math.floor(15 + c.pheno.maxAge / 10);
-      mate.breedCooldown = Math.floor(15 + mate.pheno.maxAge / 10);
+      c.energy -= costPer * litter * 0.7;
+      c.pregnant = false;
+      c.mateGenes = null;
     }
     this.creatures.push(...newCreatures);
 
-    // Phase 4: Remove dead
+    // Phase 4: Remove dead — carcasses drop carrion onto their tile, seeding
+    // the scavenger food supply and the nutrient cycle. Predated bodies leave
+    // less behind because the hunter already ate its fill.
     for (const c of this.creatures) {
       if (!c.alive) {
+        const eco = this.ecosystem[c.y * CFG.W + c.x];
+        if (eco) {
+          const leftover = (c.deathCause === 'predated') ? 0.3 : 1.0;
+          eco.carrion += c.pheno.bodySize * CFG.CARRION_FRACTION * leftover;
+        }
+        if (c.deathCause === 'starved') this.stats.starved++;
+        else if (c.deathCause === 'aged') this.stats.aged++;
+        else if (c.deathCause === 'disease') this.stats.disease++;
+        else if (c.deathCause === 'cold' || c.deathCause === 'heat') this.stats.cold++;
         const sp = this.speciesMap.get(c.speciesId);
         if (sp) {
           sp.population--;
@@ -1290,13 +1631,28 @@ class Simulation {
     return {
       x, y, biome: biome.name,
       altitude: Math.round(this.world.altitude[i]),
-      temperature: this.world.temperature[i].toFixed(1),
+      temperature: (this.world.temperature[i] + this.seasonalTempOffset(y)).toFixed(1),
       rainfall: Math.round(this.world.rainfall[i]),
       plantBiomass: eco.plantBiomass.toFixed(1),
       maxBiomass: eco.maxBiomass,
       growthRate: (eco.growthRate * 100).toFixed(0),
+      carrion: eco.carrion.toFixed(1),
+      nutrients: eco.nutrients.toFixed(1),
       creatures: creaturesHere,
       creatureCount: eco.creatureCount
+    };
+  }
+
+  /// Snapshot of global realism state for the UI.
+  getWorldStatus() {
+    return {
+      season: this.seasonName,
+      seasonPhase: this.season,
+      year: Math.floor(this.tick / CFG.YEAR_LENGTH) + 1,
+      climateShift: this.climateShift,
+      infected: this.infectedCount,
+      events: this.events,
+      stats: this.stats
     };
   }
 }
@@ -1394,6 +1750,20 @@ class Renderer {
           r = 20;
           g = 40 + norm * 200;
           b = 80 + norm * 175;
+        } else if (this.viewMode === 'carrion') {
+          // Dark base with red carrion intensity.
+          const eco = this.sim.ecosystem[i];
+          const norm = Math.min(1, eco.carrion / 5);
+          r = 30 + norm * 200; g = 20; b = 20;
+        } else if (this.viewMode === 'nutrients') {
+          // Soil fertility: brown→green.
+          const eco = this.sim.ecosystem[i];
+          const norm = Math.min(1, eco.nutrients / 20);
+          r = 40 + norm * 60; g = 30 + norm * 170; b = 25;
+        } else if (this.viewMode === 'disease') {
+          // Ocean-blue base; infection density glows magenta (filled below).
+          if (world.altitude[i] < 0) { r = 18; g = 28; b = 42; }
+          else { r = 30; g = 34; b = 30; }
         }
 
         data[pi] = Math.max(0, Math.min(255, r));
@@ -1413,7 +1783,11 @@ class Renderer {
   }
 
   draw() {
-    if (this.terrainDirty) this.buildTerrainBuffer();
+    // Carrion, nutrient and disease overlays change every tick, so their
+    // terrain buffer must be rebuilt continuously rather than cached.
+    const dynamicView = (this.viewMode === 'carrion'
+      || this.viewMode === 'nutrients' || this.viewMode === 'disease');
+    if (this.terrainDirty || dynamicView) this.buildTerrainBuffer();
 
     const ctx = this.ctx;
     ctx.fillStyle = '#0a0a1a';
@@ -1431,17 +1805,24 @@ class Renderer {
 
     // Draw creatures
     if (this.showCreatures) {
+      const diseaseView = (this.viewMode === 'disease');
       for (const c of this.sim.creatures) {
         if (!c.alive) continue;
-        const sp = this.sim.speciesMap.get(c.speciesId);
-        if (sp) {
-          ctx.fillStyle = `rgb(${sp.color[0]},${sp.color[1]},${sp.color[2]})`;
+        if (diseaseView) {
+          // Infection lens: sick = magenta, immune = cyan, healthy = grey.
+          ctx.fillStyle = c.infected ? '#ff3df0' : (c.resistant ? '#40e0d0' : '#556');
         } else {
-          ctx.fillStyle = '#fff';
+          const sp = this.sim.speciesMap.get(c.speciesId);
+          ctx.fillStyle = sp ? `rgb(${sp.color[0]},${sp.color[1]},${sp.color[2]})` : '#fff';
         }
         const size = Math.max(0.3, Math.min(0.9, c.pheno.bodySize / 5));
         const off = (1 - size) / 2;
         ctx.fillRect(c.x + off, c.y + off, size, size);
+        // Juveniles get a faint dimming so growth is visible on the map.
+        if (!diseaseView && c.age < c.pheno.maturityAge) {
+          ctx.fillStyle = 'rgba(0,0,0,0.35)';
+          ctx.fillRect(c.x + off, c.y + off, size, size);
+        }
       }
     }
 
@@ -1903,6 +2284,8 @@ class App {
       <p><span class="label">Rainfall:</span> <span class="value">${info.rainfall}</span></p>
       <p><span class="label">Plant Biomass:</span> <span class="value">${info.plantBiomass} / ${info.maxBiomass}</span></p>
       <p><span class="label">Growth Rate:</span> <span class="value">${info.growthRate}%</span></p>
+      <p><span class="label">Carrion:</span> <span class="value">${info.carrion}</span></p>
+      <p><span class="label">Soil Nutrients:</span> <span class="value">${info.nutrients}</span></p>
       <p><span class="label">Creatures:</span> <span class="value">${info.creatureCount}</span></p>
     `;
     if (info.creatures.length > 0) {
@@ -1912,13 +2295,17 @@ class App {
         const sp = this.sim.speciesMap.get(c.speciesId);
         const spName = sp ? sp.name : '?';
         const spCol = sp ? `rgb(${sp.color.join(',')})` : '#fff';
-        const stage = isMature(c) ? 'Adult' : 'Juvenile';
+        const stage = c.pregnant ? 'Pregnant' : (isMature(c) ? 'Adult' : 'Juvenile');
         const def = [];
         if (c.pheno.armor > 0.4) def.push(`Armor ${(c.pheno.armor*100).toFixed(0)}%`);
         if (c.pheno.venom > 0.4) def.push(`Venom ${(c.pheno.venom*100).toFixed(0)}%`);
         if (c.pheno.pack  > 0.4) def.push(`Pack ${(c.pheno.pack*100).toFixed(0)}%`);
+        if (c.pheno.display > 0.4) def.push(`Display ${(c.pheno.display*100).toFixed(0)}%`);
+        if (c.pheno.scavenge > 0.4) def.push(`Scavenger ${(c.pheno.scavenge*100).toFixed(0)}%`);
+        const healthTag = c.infected ? ' <span style="color:#ff3df0">🦠 sick</span>'
+          : (c.resistant ? ' <span style="color:#40e0d0">immune</span>' : '');
         html += `<div class="species-card" style="border-left:3px solid ${spCol}">
-          <div class="name" style="color:${spCol}">${sexSymbol(c.sex)} ${spName}</div>
+          <div class="name" style="color:${spCol}">${sexSymbol(c.sex)} ${spName}${healthTag}</div>
           <div class="stats">
             ${dietLabel(c.pheno.diet)} ${stage} | Size: ${c.pheno.bodySize.toFixed(1)} | Age: ${c.age}/${Math.round(c.pheno.maxAge)}<br>
             Energy: ${c.energy.toFixed(1)} | Health: ${(c.health * 100).toFixed(0)}% | ${stateName[c.state || 0]}
@@ -1993,14 +2380,22 @@ class App {
     const el = document.getElementById('planet-info');
     if (!el) return;
     const p = this.sim.planet;
+    const ws = this.sim.getWorldStatus();
     // Count average adaptation across the current population.
-    let radSum = 0, toxSum = 0, photoSum = 0, count = 0;
+    let radSum = 0, toxSum = 0, photoSum = 0, immSum = 0, dispSum = 0, scavSum = 0, count = 0;
     for (const c of this.sim.creatures) {
       if (!c.alive) continue;
       radSum += c.pheno.radTol; toxSum += c.pheno.toxTol; photoSum += c.pheno.photosyn;
+      immSum += c.pheno.immunity; dispSum += c.pheno.display; scavSum += c.pheno.scavenge;
       count++;
     }
     const avg = (s) => count ? (s / count * 100).toFixed(0) + '%' : '—';
+    const st = ws.stats;
+    const climate = ws.climateShift > 1 ? `+${ws.climateShift.toFixed(1)}°C (warming)`
+      : ws.climateShift < -1 ? `${ws.climateShift.toFixed(1)}°C (cooling)` : 'stable';
+    let eventsHtml = ws.events.slice(0, 5).map(e =>
+      `<p style="color:#e0a0b0;font-size:11px;margin:2px 0">T${e.tick}: ${e.desc}</p>`).join('');
+    if (!eventsHtml) eventsHtml = '<p style="color:#606080;font-size:11px">No catastrophes yet.</p>';
     el.innerHTML = `
       <div class="species-card" style="border-left:3px solid #e94560">
         <div class="name" style="color:#e94560">${p.name}</div>
@@ -2016,14 +2411,49 @@ class App {
           Ocean fraction: ${(p.oceanFrac*100).toFixed(0)}%
         </div>
       </div>
+      <div class="species-card" style="border-left:3px solid #66ccff">
+        <div class="name" style="color:#66ccff">Climate &amp; Season</div>
+        <div class="stats">
+          Season: ${ws.season} (Year ${ws.year})<br>
+          Climate trend: ${climate}<br>
+          Infected now: ${ws.infected}
+        </div>
+      </div>
       <div class="species-card">
         <div class="name">Population adaptation</div>
         <div class="stats">
-          Avg radiation tolerance: ${avg(radSum)}<br>
-          Avg toxic tolerance: ${avg(toxSum)}<br>
-          Avg photosynthesis: ${avg(photoSum)}
+          Radiation tol: ${avg(radSum)} | Toxin tol: ${avg(toxSum)}<br>
+          Photosynthesis: ${avg(photoSum)} | Immunity: ${avg(immSum)}<br>
+          Display: ${avg(dispSum)} | Scavenging: ${avg(scavSum)}
         </div>
+      </div>
+      <div class="species-card">
+        <div class="name">Causes of death (cumulative)</div>
+        <div class="stats">
+          Starvation: ${st.starved} | Predation: ${st.predated}<br>
+          Old age: ${st.aged} | Disease: ${st.disease}<br>
+          Climate: ${st.cold} | Births: ${st.births}
+        </div>
+      </div>
+      <div class="species-card" style="border-left:3px solid #e0a0b0">
+        <div class="name" style="color:#e0a0b0">Recent catastrophes</div>
+        <div class="stats">${eventsHtml}</div>
       </div>`;
+  }
+
+  /// Flash a banner when a fresh catastrophe occurs, then fade it.
+  updateEventBanner(ws) {
+    const el = document.getElementById('event-banner');
+    if (!el) return;
+    const latest = ws.events[0];
+    if (latest && latest.tick !== this._lastEventTick) {
+      this._lastEventTick = latest.tick;
+      this._eventShownAt = this.sim.tick;
+      el.textContent = `⚠ Tick ${latest.tick}: ${latest.desc}`;
+      el.classList.add('show');
+    } else if (this._eventShownAt && this.sim.tick - this._eventShownAt > 400) {
+      el.classList.remove('show');
+    }
   }
 
   startLoop() {
@@ -2047,6 +2477,11 @@ class App {
         document.getElementById('stat-pop').textContent = this.sim.creatures.length;
         document.getElementById('stat-species').textContent =
           this.sim.species.filter(s => !s.extinct && s.population > 0).length;
+
+        const ws = this.sim.getWorldStatus();
+        document.getElementById('stat-season').textContent = `${ws.season} Y${ws.year}`;
+        document.getElementById('stat-infected').textContent = ws.infected;
+        this.updateEventBanner(ws);
 
         this.updateSpeciesList();
         this.updateGraph();
