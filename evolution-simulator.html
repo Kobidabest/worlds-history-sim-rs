@@ -110,6 +110,8 @@ canvas{display:block;image-rendering:pixelated}
       <option value="altitude">Altitude</option>
       <option value="temperature">Temperature</option>
       <option value="rainfall">Rainfall</option>
+      <option value="plants">Plants</option>
+      <option value="microbes">Microbes</option>
       <option value="carrion">Carrion</option>
       <option value="nutrients">Nutrients</option>
       <option value="disease">Disease</option>
@@ -177,10 +179,15 @@ const CFG = {
   SPECIATION_INTERVAL: 50,
   SNAPSHOT_INTERVAL: 10,
   MAX_SNAPSHOTS: 500,
-  NUM_GENES: 26,
+  NUM_GENES: 30,          // animal genome length
+  PLANT_GENES: 9,         // plant-community genome length
+  MICROBE_GENES: 5,       // microbe-community genome length
   MUTATION_RATE: 0.08,
   MUTATION_AMOUNT: 0.15,
   BLEND_CHANCE: 0.3,
+  PLANT_MUTATION: 0.05,   // per-gene mutation rate for plant lineages
+  MICROBE_MUTATION: 0.06,
+  FLORA_INTERVAL: 4,      // ticks between plant/microbe community updates
   TILE_SIZE: 4,
   // --- Realism systems -------------------------------------------------
   YEAR_LENGTH: 1200,        // ticks per orbital year (seasonal cycle)
@@ -196,7 +203,7 @@ const CFG = {
   CATASTROPHE_RATE: 0.00035 // per-tick chance of a planet-scale catastrophe
 };
 
-// Gene indices
+// ---- ANIMAL gene indices (kingdom: Animalia) ----
 const G = {
   BODY_SIZE:0, SPEED:1, SENSE_RANGE:2, DIET:3,
   COLD_TOL:4, HEAT_TOL:5, CAMOUFLAGE:6, AGGRESSION:7,
@@ -204,7 +211,12 @@ const G = {
   WATER_NEED:12, LEG_STRENGTH:13,
   RAD_TOL:14, TOX_TOL:15, PRESS_TOL:16, PHOTOSYN:17,
   MATURITY:18, ARMOR:19, VENOM:20, PACK:21,
-  IMMUNITY:22, DISPLAY:23, SCAVENGE:24, METABOLISM:25
+  IMMUNITY:22, DISPLAY:23, SCAVENGE:24, METABOLISM:25,
+  // new realistic traits
+  THERMOREG:26,   // 0 = ectotherm (cheap, cold-sluggish), 1 = endotherm (warm-blooded, costly)
+  INTELLIGENCE:27,// better foraging & predator evasion, costly brain
+  DIGESTION:28,   // gut efficiency: more energy from food, but diet-specialised
+  GROWTH_RATE:29  // juvenile growth speed (size attained), trades against longevity
 };
 
 const GENE_NAMES = [
@@ -214,8 +226,33 @@ const GENE_NAMES = [
   "Water Need","Leg Strength",
   "Radiation Tolerance","Toxic Tolerance","Pressure Tolerance","Photosynthesis",
   "Maturity Age","Armor","Venom","Pack Instinct",
-  "Immunity","Display","Scavenging","Metabolism"
+  "Immunity","Display","Scavenging","Metabolism",
+  "Thermoregulation","Intelligence","Digestion","Growth Rate"
 ];
+
+// ---- PLANT gene indices (kingdom: Plantae — per-tile community) ----
+const PG = {
+  GROWTH:0,     // intrinsic productivity
+  CAPACITY:1,   // standing biomass ceiling (height/density)
+  DEFENSE:2,    // physical toughness: reduces herbivore intake
+  TOXICITY:3,   // chemical defense: poisons grazers lacking detox
+  COLD_TOL:4,   // planet-relative cold edge
+  HEAT_TOL:5,   // planet-relative hot edge
+  DROUGHT:6,    // tolerance of low precipitation
+  DISPERSAL:7,  // how fast it colonises neighbouring tiles
+  ROOTING:8     // nutrient-uptake efficiency from soil
+};
+const PLANT_GENE_NAMES = ["Growth","Capacity","Defense","Toxicity","Cold Tol","Heat Tol","Drought","Dispersal","Rooting"];
+
+// ---- MICROBE gene indices (kingdom: Microbiota — per-tile community) ----
+const MG = {
+  DECOMP:0,     // decomposition rate: carrion -> soil nutrients
+  CHEMO:1,      // chemosynthesis: primary production without sunlight
+  PATHOGEN:2,   // virulence: seeds animal disease
+  TOLERANCE:3,  // survives temperature / chemical extremes
+  SYMBIOSIS:4   // mutualism: boosts plant growth (N-fixation / mycorrhizae)
+};
+const MICROBE_GENE_NAMES = ["Decomposition","Chemosynthesis","Pathogenicity","Tolerance","Symbiosis"];
 
 // ============================================================
 // PLANET PRESETS — pick which world you want to evolve life on.
@@ -344,26 +381,83 @@ class RNG {
 // ============================================================
 // BIOME DEFINITIONS
 // ============================================================
+// Each biome sets the physical stage: a base plant carrying capacity
+// (maxBio) and productivity (growth) that plant communities evolve within,
+// whether it is aquatic (animals can't colonise open liquid), and whether
+// it supports chemosynthesis (microbe-driven primary production with no
+// sunlight, as at deep-sea / geothermal vents).
 const BIOMES = {
-  OCEAN:     {id:0, name:"Ocean",      color:[30,60,120],   growth:0,    maxBio:0},
-  ICE_CAP:   {id:1, name:"Ice Cap",    color:[220,230,245], growth:0,    maxBio:0},
-  TUNDRA:    {id:2, name:"Tundra",     color:[160,175,165], growth:0.10, maxBio:15},
-  DESERT:    {id:3, name:"Desert",     color:[210,190,140], growth:0.05, maxBio:5},
-  GRASSLAND: {id:4, name:"Grassland",  color:[120,170,80],  growth:0.60, maxBio:60},
-  TAIGA:     {id:5, name:"Taiga",      color:[60,100,70],   growth:0.25, maxBio:30},
-  FOREST:    {id:6, name:"Forest",     color:[40,120,50],   growth:0.85, maxBio:100},
-  RAINFOREST:{id:7, name:"Rainforest", color:[20,90,35],    growth:1.00, maxBio:120}
+  OCEAN:        {id:0,  name:"Ocean",          color:[30,60,120],   growth:0,    maxBio:0,   aquatic:true,  chemo:false},
+  ICE_CAP:      {id:1,  name:"Ice Cap",        color:[220,230,245], growth:0,    maxBio:0,   aquatic:false, chemo:false, barren:true},
+  TUNDRA:       {id:2,  name:"Tundra",         color:[160,175,165], growth:0.10, maxBio:15,  aquatic:false, chemo:false},
+  DESERT:       {id:3,  name:"Desert",         color:[210,190,140], growth:0.05, maxBio:6,   aquatic:false, chemo:false},
+  GRASSLAND:    {id:4,  name:"Grassland",      color:[120,170,80],  growth:0.60, maxBio:60,  aquatic:false, chemo:false},
+  TAIGA:        {id:5,  name:"Taiga",          color:[60,100,70],   growth:0.25, maxBio:30,  aquatic:false, chemo:false},
+  FOREST:       {id:6,  name:"Forest",         color:[40,120,50],   growth:0.85, maxBio:100, aquatic:false, chemo:false},
+  RAINFOREST:   {id:7,  name:"Rainforest",     color:[20,90,35],    growth:1.00, maxBio:120, aquatic:false, chemo:false},
+  // --- alien / extreme biomes ---
+  AMMONIA_SEA:  {id:8,  name:"Ammonia Sea",    color:[82,110,122],  growth:0,    maxBio:0,   aquatic:true,  chemo:false},
+  METHANE_LAKE: {id:9,  name:"Methane Lake",   color:[60,42,30],    growth:0,    maxBio:0,   aquatic:true,  chemo:false},
+  SULFURIC_SEA: {id:10, name:"Sulfuric Sea",   color:[168,142,90],  growth:0,    maxBio:0,   aquatic:true,  chemo:false},
+  LAVA_FIELD:   {id:11, name:"Lava Field",     color:[150,55,30],   growth:0,    maxBio:0,   aquatic:false, chemo:false, barren:true},
+  CRYO_PLAIN:   {id:12, name:"Cryo Plain",     color:[180,200,220], growth:0.04, maxBio:8,   aquatic:false, chemo:false},
+  CRYSTAL_FOREST:{id:13,name:"Crystal Forest", color:[168,130,210], growth:0.40, maxBio:55,  aquatic:false, chemo:false},
+  FUNGAL_MAT:   {id:14, name:"Fungal Mat",     color:[120,70,140],  growth:0.70, maxBio:85,  aquatic:false, chemo:true},
+  GEO_VENT:     {id:15, name:"Geothermal Vent",color:[110,60,40],   growth:0.35, maxBio:50,  aquatic:false, chemo:true},
+  SILICA_DESERT:{id:16, name:"Silica Desert",  color:[220,200,230], growth:0.02, maxBio:4,   aquatic:false, chemo:false},
+  HAZE_HIGHLAND:{id:17, name:"Haze Highland",  color:[180,160,120], growth:0.18, maxBio:24,  aquatic:false, chemo:false}
 };
 const BIOME_LIST = Object.values(BIOMES);
 
+// Pick the open-liquid biome that matches the planet's solvent.
+function oceanBiomeFor(planet) {
+  const s = planet && planet.solvent ? planet.solvent : "Liquid water";
+  if (s.indexOf("ammonia") >= 0) return BIOMES.AMMONIA_SEA;
+  if (s.indexOf("methane") >= 0) return BIOMES.METHANE_LAKE;
+  if (s.indexOf("ulfuric") >= 0) return BIOMES.SULFURIC_SEA;
+  if (s.indexOf("Dry") >= 0 || s.indexOf("frozen") >= 0) return BIOMES.SILICA_DESERT;
+  return BIOMES.OCEAN;
+}
+
+// Planet-aware biome classification. Oceans take the solvent's biome; land
+// biomes depend on the planet's atmosphere chemistry and the local climate,
+// expressed relative to the planet's own mean temperature.
 function classifyBiome(alt, rain, temp, planet) {
-  if (alt < 0) return BIOMES.OCEAN;
-  // Re-center the climate envelope on the planet's mean temperature so
-  // that even Titan has a tundra-equator and ice-cap poles rather than
-  // one flat biome blanket. The thresholds are in planet-relative degrees.
+  if (alt < 0) return oceanBiomeFor(planet);
+
   const mean = (planet && planet.meanTemp !== undefined) ? planet.meanTemp : 0;
+  const atm = (planet && planet.atmosphere) ? planet.atmosphere : "O2 / N2";
+  const oxygen = atm.indexOf("O2") >= 0;
+  const reducing = (atm.indexOf("Methane") >= 0 || atm.indexOf("Ammonia") >= 0);
+  const sulfuric = atm.indexOf("Sulfuric") >= 0;
   const rel = temp - mean;
-  if (rel < -12) return BIOMES.ICE_CAP;
+
+  // Extreme heat scorches land into lava/silica regardless of chemistry.
+  if (temp > 45 && rel > 8) return BIOMES.LAVA_FIELD;
+  // Deep cold.
+  if (rel < -14) return oxygen ? BIOMES.ICE_CAP : BIOMES.CRYO_PLAIN;
+
+  if (sulfuric) {
+    // Acid world: sparse crystalline/haze cover.
+    if (rain < 300) return BIOMES.SILICA_DESERT;
+    return BIOMES.HAZE_HIGHLAND;
+  }
+  if (reducing) {
+    // Reducing atmospheres host fungal/chemotrophic mats where it's wet,
+    // crystal scrub where it's dry.
+    if (rain > 900) return BIOMES.FUNGAL_MAT;
+    if (rel < -2) return BIOMES.CRYO_PLAIN;
+    return (rain < 300) ? BIOMES.SILICA_DESERT : BIOMES.CRYSTAL_FOREST;
+  }
+  if (!oxygen) {
+    // Thick CO2 / trace: tougher analogues of the temperate biomes.
+    if (rel < -2) return BIOMES.HAZE_HIGHLAND;
+    if (rain < 300) return BIOMES.SILICA_DESERT;
+    if (rain < 1400) return BIOMES.CRYSTAL_FOREST;
+    return BIOMES.FUNGAL_MAT;
+  }
+
+  // Oxygen world — familiar Earthlike biomes.
   if (rel < -2) {
     if (rain < 725) return BIOMES.TUNDRA;
     return BIOMES.TAIGA;
@@ -519,8 +613,10 @@ class World {
   }
 
   isHabitable(x, y) {
-    const b = this.biome[this.idx(x, y)];
-    return b !== BIOMES.OCEAN.id && b !== BIOMES.ICE_CAP.id;
+    // Animals live on solid land that isn't a barren ice cap or lava field;
+    // open liquid and barren extremes exclude them (microbes still live there).
+    const b = BIOME_LIST[this.biome[this.idx(x, y)]];
+    return !b.aquatic && !b.barren;
   }
 
   getBiome(x, y) { return BIOME_LIST[this.biome[this.idx(x, y)]]; }
@@ -563,8 +659,57 @@ function expressGene(genes) {
     scavenge:     genes[G.SCAVENGE] || 0, // 0..1, efficiency feeding on carrion
     // Metabolic tempo: fast burners are quicker & breed sooner but starve
     // faster; slow burners are hardy and frugal. Centered near 1.0.
-    metabolism:   0.6 + (genes[G.METABOLISM] !== undefined ? genes[G.METABOLISM] : 0.5) * 0.9
+    metabolism:   0.6 + (genes[G.METABOLISM] !== undefined ? genes[G.METABOLISM] : 0.5) * 0.9,
+    // --- detailed physiology ---
+    // Endothermy: warm-blooded animals stay active and resist cold but pay a
+    // higher resting metabolic cost (the classic ecto/endotherm trade-off).
+    thermoreg:    genes[G.THERMOREG]    !== undefined ? genes[G.THERMOREG]    : 0,
+    intelligence: genes[G.INTELLIGENCE] !== undefined ? genes[G.INTELLIGENCE] : 0,
+    digestion:    genes[G.DIGESTION]    !== undefined ? genes[G.DIGESTION]    : 0.5,
+    growthRate:   genes[G.GROWTH_RATE]  !== undefined ? genes[G.GROWTH_RATE]  : 0.5
   };
+}
+
+// ---- Plant community expression. Tolerances are planet-relative (mapped in
+// the flora update), so plants can adapt to any world's temperature band. ----
+function expressPlant(genes) {
+  return {
+    growth:    0.2 + genes[PG.GROWTH] * 1.6,      // productivity multiplier
+    capacity:  0.3 + genes[PG.CAPACITY] * 1.4,    // ceiling multiplier on biome maxBio
+    defense:   genes[PG.DEFENSE],                 // 0..1 reduces grazing
+    toxicity:  genes[PG.TOXICITY],                // 0..1 poisons unadapted grazers
+    coldGene:  genes[PG.COLD_TOL],
+    heatGene:  genes[PG.HEAT_TOL],
+    drought:   genes[PG.DROUGHT],
+    dispersal: genes[PG.DISPERSAL],
+    rooting:   genes[PG.ROOTING]
+  };
+}
+
+// ---- Microbe community expression. ----
+function expressMicrobe(genes) {
+  return {
+    decomp:    0.2 + genes[MG.DECOMP] * 1.6,
+    chemo:     genes[MG.CHEMO],
+    pathogen:  genes[MG.PATHOGEN],
+    tolerance: genes[MG.TOLERANCE],
+    symbiosis: genes[MG.SYMBIOSIS]
+  };
+}
+
+function randomKingdomGenome(rng, n, lo, hi) {
+  const g = new Float32Array(n);
+  for (let i = 0; i < n; i++) g[i] = rng.range(lo, hi);
+  return g;
+}
+
+// Mutate a per-tile community genome in place-ish (returns a mutated copy).
+function mutateGenome(src, n, rate, rng) {
+  const g = new Float32Array(src);
+  for (let i = 0; i < n; i++) {
+    if (rng.chance(rate)) g[i] = Math.max(0, Math.min(1, g[i] + rng.range(-0.12, 0.12)));
+  }
+  return g;
 }
 
 // Diet-based food preferences. Pure herbivores (diet<0.4) graze; pure
@@ -572,7 +717,9 @@ function expressGene(genes) {
 // is more abundant.
 function isHerbivore(p) { return p.diet < 0.4; }
 function isCarnivore(p) { return p.diet > 0.6; }
-function isMature(c)    { return c.age >= c.pheno.maturityAge; }
+// Fast growers reach breeding size sooner (growthRate gene, default 0.5 = neutral).
+function maturityOf(c) { return c.pheno.maturityAge * (1.3 - c.pheno.growthRate * 0.6); }
+function isMature(c)    { return c.age >= maturityOf(c); }
 
 function crossover(a, b, rng, mutationScale) {
   mutationScale = mutationScale || 1;
@@ -626,6 +773,10 @@ function adaptBaseToPlanet(base, planet, rng) {
   base[G.PRESS_TOL] = Math.max(0, Math.min(1, pNorm * 0.7 + rng.range(0, 0.3)));
   if (planet.oceanFrac < 0.2) base[G.WATER_NEED] = rng.range(0.5, 0.9); // drought-adapted
   base[G.IMMUNITY] = rng.range(0.3, 0.6); // founders carry a baseline immune system
+  // Cold worlds favour warm-blooded founders; otherwise a mix of strategies.
+  base[G.THERMOREG] = planet.meanTemp < 0 ? rng.range(0.4, 0.7) : rng.range(0.1, 0.5);
+  base[G.DIGESTION] = rng.range(0.4, 0.7);
+  base[G.GROWTH_RATE] = rng.range(0.4, 0.7);
 }
 
 function dietLabel(d) {
@@ -717,20 +868,58 @@ function sexSymbol(s) { return s === 0 ? '♀' : '♂'; }
 // ============================================================
 // TILE ECOSYSTEM
 // ============================================================
+// A tile hosts three kingdoms: a plant community (Plantae), a microbe
+// community (Microbiota), and visiting animals (Animalia, stored separately).
+// Plants and microbes are modelled as evolving per-tile populations rather
+// than individuals, which keeps the three-kingdom ecology affordable.
 class TileEco {
-  constructor(biome) {
-    this.plantBiomass = biome.maxBio * 0.5;
-    this.maxBiomass = biome.maxBio;
-    this.growthRate = biome.growth;
+  constructor(biome, planet, rng) {
+    this.biomeId = biome.id;
+    this.baseGrowth = biome.growth;
+    this.baseCap = biome.maxBio;
+    this.chemo = !!biome.chemo;
+
+    // Founder plant community: productive, climate-generalist for this planet,
+    // and initially *palatable* — physical and chemical defenses are near zero
+    // and only evolve upward under real grazing pressure (coevolution).
+    const pg = new Float32Array(CFG.PLANT_GENES);
+    pg[PG.GROWTH]    = rng.range(0.5, 0.8);
+    pg[PG.CAPACITY]  = rng.range(0.5, 0.8);
+    pg[PG.DEFENSE]   = rng.range(0.0, 0.12);
+    pg[PG.TOXICITY]  = rng.range(0.0, 0.12);
+    pg[PG.COLD_TOL]  = rng.range(0.15, 0.3);  // cold-hardy edge (planet-relative)
+    pg[PG.HEAT_TOL]  = rng.range(0.7, 0.85);  // heat-hardy edge
+    pg[PG.DROUGHT]   = planet.oceanFrac < 0.2 ? rng.range(0.5, 0.85) : rng.range(0.2, 0.5);
+    pg[PG.DISPERSAL] = rng.range(0.4, 0.7);
+    pg[PG.ROOTING]   = rng.range(0.4, 0.7);
+    this.plantGenes = pg;
+    this.plantPheno = expressPlant(pg);
+    this.plantBiomass = biome.maxBio * 0.4;
+
+    // Founder microbe community — capable decomposers, mild pathogens.
+    const mg = new Float32Array(CFG.MICROBE_GENES);
+    mg[MG.DECOMP]    = rng.range(0.4, 0.7);
+    mg[MG.CHEMO]     = biome.chemo ? rng.range(0.5, 0.8) : rng.range(0.1, 0.4);
+    mg[MG.PATHOGEN]  = rng.range(0.05, 0.2);
+    mg[MG.TOLERANCE] = rng.range(0.4, 0.7);
+    mg[MG.SYMBIOSIS] = rng.range(0.2, 0.5);
+    this.microbeGenes = mg;
+    this.microbePheno = expressMicrobe(mg);
+    this.microbeBiomass = 2 + biome.maxBio * 0.1;
+
+    // Animal census (recomputed each tick).
     this.creatureCount = 0;
     this.herbCount = 0;
     this.carnCount = 0;
-    // --- nutrient cycle ---
-    // Carcasses pile up here when creatures die and are eaten by scavengers
-    // or rot down into soil nutrients that fertilise plant regrowth.
+
+    // Nutrient cycle: carcasses -> carrion -> (microbial decomposition) -> soil.
     this.carrion = 0;
-    this.nutrients = 0;
+    this.nutrients = biome.maxBio * 0.2;
   }
+
+  // Backwards-compatible accessor used by older UI/render code paths.
+  get maxBiomass() { return this.baseCap * this.plantPheno.capacity; }
+  get growthRate() { return this.baseGrowth * this.plantPheno.growth; }
 }
 
 // ============================================================
@@ -782,12 +971,105 @@ class Simulation {
     return 1 + phase * 0.35 * (0.3 + 0.7 * latWeight) - this.climateShift * 0.008;
   }
 
+  /// Update the plant and microbe kingdoms across every tile: microbial
+  /// decomposition feeding the soil, primary production (sunlight or
+  /// chemosynthesis), and — on an interval — slow community evolution.
+  updateFlora() {
+    const W = CFG.W, eco = this.ecosystem, planet = this.planet;
+    const pMin = planet.meanTemp - planet.tempSpan * 0.5;
+    const pMax = planet.meanTemp + planet.tempSpan * 0.5;
+    const light = planet.solar;
+    for (let i = 0; i < eco.length; i++) {
+      const t = eco[i];
+      const y = (i / W) | 0;
+      const mp = t.microbePheno;
+
+      // Microbes decompose carcasses into soil nutrients; richer, more active
+      // microbial communities recycle faster.
+      if (t.carrion > 0) {
+        const rate = Math.min(0.9, CFG.CARRION_DECAY * (0.4 + mp.decomp * (0.4 + t.microbeBiomass * 0.02)));
+        const rotted = t.carrion * rate;
+        t.carrion -= rotted;
+        t.nutrients += rotted * CFG.CARRION_TO_NUTRIENT;
+        if (t.carrion < 0.01) t.carrion = 0;
+      }
+      if (t.nutrients > 0) t.nutrients *= (1 - CFG.NUTRIENT_DECAY);
+
+      // Microbe biomass tracks available food (nutrients, carrion, and
+      // chemosynthesis at vents); chemotrophs persist with no sunlight at all.
+      const microFood = t.nutrients * 0.08 + t.carrion * 0.2 + (t.chemo ? mp.chemo * 1.5 : light * 0.05);
+      t.microbeBiomass += microFood - t.microbeBiomass * 0.05;
+      if (t.microbeBiomass < 0.5) t.microbeBiomass = 0.5;
+      else if (t.microbeBiomass > 80) t.microbeBiomass = 80;
+
+      // Plant primary production.
+      const cap = t.baseCap * t.plantPheno.capacity;
+      if (cap > 0.5) {
+        const pp = t.plantPheno;
+        const localTemp = this.world.temperature[i] + this.seasonalTempOffset(y);
+        const coldEdge = pMin - 6 + pp.coldGene * 26;
+        const heatEdge = pMax + 6 - (1 - pp.heatGene) * 26;
+        let climateOK = 1;
+        if (localTemp < coldEdge) climateOK = Math.max(0, 1 - (coldEdge - localTemp) / 15);
+        else if (localTemp > heatEdge) climateOK = Math.max(0, 1 - (localTemp - heatEdge) / 15);
+        const rain = this.world.rainfall[i];
+        const waterOK = Math.min(1, rain / 600 + pp.drought * 0.6 + 0.1);
+        const seasonMul = Math.max(0.15, this.seasonalGrowthMul(y));
+        // Energy source: starlight (seasonal) and/or microbial chemosynthesis.
+        const lightTerm = Math.min(1.3, light * seasonMul + (t.chemo ? mp.chemo * 0.8 : 0));
+        const nutrientMul = 1 + Math.min(1, t.nutrients / (cap + 1)) * pp.rooting;
+        const symbiosis = 1 + mp.symbiosis * 0.4;
+        const realized = t.baseGrowth * pp.growth * climateOK * waterOK * lightTerm * nutrientMul * symbiosis;
+        if (realized > 0.001) {
+          const growth = realized * (1 - t.plantBiomass / cap) * cap * 0.02;
+          t.plantBiomass = Math.max(0, Math.min(cap, t.plantBiomass + growth));
+          if (growth > 0) t.nutrients = Math.max(0, t.nutrients - growth * 0.12);
+        } else {
+          t.plantBiomass *= 0.99; // die back where the climate no longer suits
+        }
+      } else {
+        t.plantBiomass *= 0.98;
+      }
+    }
+    if (this.tick % CFG.FLORA_INTERVAL === 0) this.evolveFlora();
+  }
+
+  /// Slow evolution of the plant & microbe kingdoms: mutation explores trait
+  /// space, and thriving communities colonise neighbouring tiles, so flora
+  /// adapts to local climate and shifts range over time.
+  evolveFlora() {
+    const W = CFG.W, H = CFG.H, eco = this.ecosystem, rng = this.rng;
+    for (let i = 0; i < eco.length; i++) {
+      const t = eco[i];
+      // Microbes mutate everywhere (they live in every tile).
+      if (rng.chance(CFG.MICROBE_MUTATION)) {
+        t.microbeGenes = mutateGenome(t.microbeGenes, CFG.MICROBE_GENES, 0.5, rng);
+        t.microbePheno = expressMicrobe(t.microbeGenes);
+      }
+      if (t.baseCap <= 0.5) continue; // no plant lineage on barren/aquatic tiles
+      if (rng.chance(CFG.PLANT_MUTATION)) {
+        t.plantGenes = mutateGenome(t.plantGenes, CFG.PLANT_GENES, 0.5, rng);
+        t.plantPheno = expressPlant(t.plantGenes);
+      }
+      // Colonisation: a markedly more successful neighbour seeds its lineage.
+      const x = i % W, y = (i / W) | 0;
+      const nx = (x + (rng.chance(0.5) ? 1 : -1) + W) % W;
+      const ny = Math.max(0, Math.min(H - 1, y + (rng.chance(0.5) ? 1 : -1)));
+      const nb = eco[ny * W + nx];
+      if (nb.baseCap > 0.5 && nb.plantBiomass > t.plantBiomass * 1.25
+          && rng.chance(0.2 + nb.plantPheno.dispersal * 0.5)) {
+        t.plantGenes = mutateGenome(nb.plantGenes, CFG.PLANT_GENES, 0.25, rng);
+        t.plantPheno = expressPlant(t.plantGenes);
+      }
+    }
+  }
+
   initEcosystem() {
     for (let y = 0; y < CFG.H; y++) {
       for (let x = 0; x < CFG.W; x++) {
         const i = y * CFG.W + x;
         const biome = this.world.getBiome(x, y);
-        this.ecosystem[i] = new TileEco(biome);
+        this.ecosystem[i] = new TileEco(biome, this.planet, this.rng);
       }
     }
   }
@@ -1059,19 +1341,22 @@ class Simulation {
   /// dense populations. Crowding drives epidemics — a realistic density check.
   spreadDisease() {
     let infected = 0;
-    for (const [, cell] of this.spatialGrid) {
+    for (const [key, cell] of this.spatialGrid) {
       if (cell.length < 2) {
         // Still let solitary infected creatures count toward the tally.
         for (const oi of cell) { const s = this.creatures[oi]; if (s && s.infected) infected++; }
         continue;
       }
-      // Spontaneous outbreak: more likely the denser the tile.
+      // Spontaneous outbreaks emerge from the local pathogenic microbe load,
+      // amplified by crowding — disease is a real third-kingdom interaction.
       const density = cell.length;
+      const eco = this.ecosystem[key];
+      const pathogen = eco ? eco.microbePheno.pathogen : 0.2;
+      const outbreak = CFG.DISEASE_BASE_RATE * density * density * (0.3 + pathogen * 3);
       for (const oi of cell) {
         const c = this.creatures[oi];
         if (!c || !c.alive) continue;
-        if (!c.infected && !c.resistant
-            && this.rng.chance(CFG.DISEASE_BASE_RATE * density * density)) {
+        if (!c.infected && !c.resistant && this.rng.chance(outbreak)) {
           this.infect(c);
         }
       }
@@ -1217,7 +1502,9 @@ class Simulation {
       const coldTolEff = pMin - 6 + c.pheno.coldGene * 26; // low gene ⇒ cold-hardy
       const heatTolEff = pMax + 6 - (1 - c.pheno.heatGene) * 26; // high gene ⇒ heat-hardy
       if (temp < coldTolEff) {
-        c.health -= Math.abs(temp - coldTolEff) / 20 * 0.05;
+        // Endotherms (warm-blooded) buffer the cold; ectotherms take it raw.
+        const buffer = 1 - c.pheno.thermoreg * 0.7;
+        c.health -= Math.abs(temp - coldTolEff) / 20 * 0.05 * buffer;
         if (c.health <= 0) c.deathCause = 'cold';
       }
       if (temp > heatTolEff) {
@@ -1237,8 +1524,12 @@ class Simulation {
       // energy-efficient per kilo, exactly as in real ecosystems. The
       // metabolism gene sets each lineage's tempo, photosynthesis offsets it.
       const massCost = Math.pow(c.pheno.bodySize, CFG.METABOLIC_EXPONENT);
+      // Endothermy raises resting cost (the price of warm blood); a big brain
+      // is also metabolically expensive to run.
+      const thermoCost = 1 + c.pheno.thermoreg * 0.5;
       c.energy -= massCost * (2.0 - c.pheno.efficiency) * 0.3
-        * c.pheno.metabolism * (1 - 0.4 * c.pheno.photosyn);
+        * c.pheno.metabolism * thermoCost * (1 - 0.4 * c.pheno.photosyn);
+      if (c.pheno.intelligence > 0.05) c.energy -= massCost * c.pheno.intelligence * 0.08;
 
       // Sexual ornaments are metabolically expensive to grow and maintain.
       if (c.pheno.display > 0.05) c.energy -= c.pheno.display * 0.25;
@@ -1325,44 +1616,30 @@ class Simulation {
       else { eco.herbCount += 0.5; eco.carnCount += 0.5; }
     }
 
-    // Plant growth (logistic), modulated by season and by soil nutrients
-    // recycled from decomposed carcasses, plus the carrion/nutrient cycle.
-    for (let i = 0; i < this.ecosystem.length; i++) {
-      const eco = this.ecosystem[i];
-      const y = (i / CFG.W) | 0;
-      // Carrion rots: part feeds the soil, the rest is lost to the air.
-      if (eco.carrion > 0) {
-        const rotted = eco.carrion * CFG.CARRION_DECAY;
-        eco.carrion -= rotted;
-        eco.nutrients += rotted * CFG.CARRION_TO_NUTRIENT;
-        if (eco.carrion < 0.01) eco.carrion = 0;
-      }
-      if (eco.nutrients > 0) eco.nutrients *= (1 - CFG.NUTRIENT_DECAY);
-      if (eco.maxBiomass > 0) {
-        const seasonMul = Math.max(0.1, this.seasonalGrowthMul(y));
-        // Rich soil boosts regrowth up to NUTRIENT_GROWTH_BOOST.
-        const nutrientMul = 1 + Math.min(CFG.NUTRIENT_GROWTH_BOOST - 1,
-          eco.nutrients / (eco.maxBiomass + 1));
-        const growth = eco.growthRate * (1 - eco.plantBiomass / eco.maxBiomass)
-          * eco.maxBiomass * 0.02 * seasonMul * nutrientMul;
-        if (growth > 0) {
-          eco.plantBiomass = Math.min(eco.maxBiomass, eco.plantBiomass + growth);
-          eco.nutrients = Math.max(0, eco.nutrients - growth * 0.15);
-        }
-      }
-    }
+    // Phase 2a: Microbe & plant kingdoms (decomposition, primary production,
+    // and slow community evolution). Run on an interval for performance.
+    this.updateFlora();
 
     // Phase 2b: Feeding
     for (const c of this.creatures) {
       if (!c.alive) continue;
       const eco = this.ecosystem[c.y * CFG.W + c.x];
 
-      // Herbivore feeding
+      // Herbivore feeding. Plant physical defense reduces how much a grazer
+      // can crop; chemical toxicity poisons grazers that lack detox capacity
+      // (TOX_TOL gene) — driving plant–herbivore coevolution. Digestion and
+      // the diet gene set how much energy is actually extracted.
       if (c.pheno.diet < 0.6 && eco.plantBiomass > 0) {
-        const maxIntake = c.pheno.bodySize * 3.0 * (1 - c.pheno.diet);
+        const pp = eco.plantPheno;
+        const defenseMul = 1 - pp.defense * 0.7;
+        const maxIntake = c.pheno.bodySize * 3.0 * (1 - c.pheno.diet) * defenseMul;
         const consumed = Math.min(maxIntake, eco.plantBiomass);
         eco.plantBiomass -= consumed;
-        c.energy += consumed * (1 - c.pheno.diet) * 0.8;
+        const digest = 0.6 + c.pheno.digestion * 0.6;
+        c.energy += consumed * (1 - c.pheno.diet) * 0.8 * digest;
+        // Toxic plants harm unprotected grazers.
+        const poison = pp.toxicity - c.pheno.toxTol;
+        if (poison > 0) { c.health -= poison * 0.06; c.energy -= poison * 1.5; }
       }
 
       // Scavenging: feed on carrion lying on this tile. Anything carnivorous
@@ -1385,8 +1662,12 @@ class Simulation {
           const preyIdx = tileCreatures[this.rng.int(0, tileCreatures.length)];
           const prey = this.creatures[preyIdx];
           if (prey !== c && prey.alive && prey.pheno.bodySize < c.pheno.bodySize * 1.5) {
-            // Detection check — camouflage and prey's pack-mates obscure it.
-            const detectChance = (c.pheno.senseRange / 8.0) * (1 - prey.pheno.camouflage * 0.7);
+            // Detection check — camouflage hides prey, and clever prey are
+            // harder to catch (the hunter's own wits help it close in).
+            const detectChance = (c.pheno.senseRange / 8.0)
+              * (1 + c.pheno.intelligence * 0.3)
+              * (1 - prey.pheno.camouflage * 0.7)
+              * (1 - prey.pheno.intelligence * 0.3);
             if (this.rng.chance(detectChance)) {
               // Pack bonus: count same-species adults around hunter and prey
               // and inflate their combat power. Hunting in a pack works,
@@ -1407,7 +1688,7 @@ class Simulation {
                 // Kill — hunter's reward scales with diet, but venom in
                 // prey leaves a parting injury.
                 const foodValue = prey.pheno.bodySize * 12.0;
-                c.energy += foodValue * c.pheno.diet;
+                c.energy += foodValue * c.pheno.diet * (0.7 + c.pheno.digestion * 0.5);
                 prey.alive = false;
                 prey.deathCause = 'predated';
                 this.stats.predated++;
@@ -1628,16 +1909,31 @@ class Simulation {
     for (const c of this.creatures) {
       if (c.alive && c.x === x && c.y === y) creaturesHere.push(c);
     }
+    const pp = eco.plantPheno, mp = eco.microbePheno;
     return {
       x, y, biome: biome.name,
       altitude: Math.round(this.world.altitude[i]),
       temperature: (this.world.temperature[i] + this.seasonalTempOffset(y)).toFixed(1),
       rainfall: Math.round(this.world.rainfall[i]),
       plantBiomass: eco.plantBiomass.toFixed(1),
-      maxBiomass: eco.maxBiomass,
+      maxBiomass: eco.maxBiomass.toFixed(0),
       growthRate: (eco.growthRate * 100).toFixed(0),
       carrion: eco.carrion.toFixed(1),
       nutrients: eco.nutrients.toFixed(1),
+      // Kingdom: Plantae
+      plant: {
+        defense: (pp.defense * 100).toFixed(0),
+        toxicity: (pp.toxicity * 100).toFixed(0),
+        drought: (pp.drought * 100).toFixed(0)
+      },
+      // Kingdom: Microbiota
+      microbe: {
+        biomass: eco.microbeBiomass.toFixed(1),
+        decomp: (mp.decomp * 50).toFixed(0),
+        chemo: (mp.chemo * 100).toFixed(0),
+        pathogen: (mp.pathogen * 100).toFixed(0),
+        symbiosis: (mp.symbiosis * 100).toFixed(0)
+      },
       creatures: creaturesHere,
       creatureCount: eco.creatureCount
     };
@@ -1723,16 +2019,37 @@ class Renderer {
         let r, g, b;
 
         if (this.viewMode === 'biome') {
+          // Each biome (including the alien ones) has its own colour, so the
+          // map directly shows the world's biome mosaic. Altitude darkens
+          // highlands; plant cover deepens the green of vegetated land.
           const biome = BIOME_LIST[world.biome[i]];
           const altShade = world.altitude[i] > 0 ? 1.0 - (world.altitude[i] / 30000) : 1.0;
-          // Non-aqueous solvents re-skin the ocean tile.
-          let bc = biome.color;
-          if (biome.id === BIOMES.OCEAN.id && world.planet && world.planet.oceanColor) {
-            bc = world.planet.oceanColor;
-          }
+          const bc = biome.color;
           r = bc[0] * altShade;
           g = bc[1] * altShade;
           b = bc[2] * altShade;
+          // Vegetated tiles tint toward their standing plant biomass.
+          const eco = this.sim.ecosystem[i];
+          if (eco && eco.baseCap > 0.5) {
+            const cover = Math.min(1, eco.plantBiomass / (eco.baseCap * eco.plantPheno.capacity + 1));
+            r = r * (1 - cover * 0.35);
+            g = g * (1 - cover * 0.1) + cover * 30;
+            b = b * (1 - cover * 0.35);
+          }
+        } else if (this.viewMode === 'plants') {
+          // Plant biomass: bare → lush green.
+          const eco = this.sim.ecosystem[i];
+          if (world.altitude[i] < 0) { r = 18; g = 24; b = 38; }
+          else {
+            const cap = eco.baseCap * eco.plantPheno.capacity;
+            const norm = cap > 0.5 ? Math.min(1, eco.plantBiomass / cap) : 0;
+            r = 40 - norm * 20; g = 50 + norm * 170; b = 40 - norm * 20;
+          }
+        } else if (this.viewMode === 'microbes') {
+          // Microbial biomass: faint → vivid teal/violet.
+          const eco = this.sim.ecosystem[i];
+          const norm = Math.min(1, eco.microbeBiomass / 40);
+          r = 30 + norm * 120; g = 20 + norm * 120; b = 40 + norm * 160;
         } else if (this.viewMode === 'altitude') {
           const norm = (world.altitude[i] + 15000) / 30000;
           if (world.altitude[i] < 0) {
@@ -1785,8 +2102,8 @@ class Renderer {
   draw() {
     // Carrion, nutrient and disease overlays change every tick, so their
     // terrain buffer must be rebuilt continuously rather than cached.
-    const dynamicView = (this.viewMode === 'carrion'
-      || this.viewMode === 'nutrients' || this.viewMode === 'disease');
+    const dynamicView = (this.viewMode === 'carrion' || this.viewMode === 'nutrients'
+      || this.viewMode === 'disease' || this.viewMode === 'plants' || this.viewMode === 'microbes');
     if (this.terrainDirty || dynamicView) this.buildTerrainBuffer();
 
     const ctx = this.ctx;
@@ -2282,11 +2599,23 @@ class App {
       <p><span class="label">Altitude:</span> <span class="value">${info.altitude}m</span></p>
       <p><span class="label">Temperature:</span> <span class="value">${info.temperature}&deg;C</span></p>
       <p><span class="label">Rainfall:</span> <span class="value">${info.rainfall}</span></p>
-      <p><span class="label">Plant Biomass:</span> <span class="value">${info.plantBiomass} / ${info.maxBiomass}</span></p>
-      <p><span class="label">Growth Rate:</span> <span class="value">${info.growthRate}%</span></p>
       <p><span class="label">Carrion:</span> <span class="value">${info.carrion}</span></p>
       <p><span class="label">Soil Nutrients:</span> <span class="value">${info.nutrients}</span></p>
-      <p><span class="label">Creatures:</span> <span class="value">${info.creatureCount}</span></p>
+      <p><span class="label">Animals here:</span> <span class="value">${info.creatureCount}</span></p>
+      <div class="species-card" style="border-left:3px solid #66cc66;margin-top:8px">
+        <div class="name" style="color:#66cc66">🌿 Plant community</div>
+        <div class="stats">
+          Biomass: ${info.plantBiomass} / ${info.maxBiomass} | Growth: ${info.growthRate}%<br>
+          Defense: ${info.plant.defense}% | Toxicity: ${info.plant.toxicity}% | Drought: ${info.plant.drought}%
+        </div>
+      </div>
+      <div class="species-card" style="border-left:3px solid #b070d0">
+        <div class="name" style="color:#b070d0">🦠 Microbe community</div>
+        <div class="stats">
+          Biomass: ${info.microbe.biomass} | Decomp: ${info.microbe.decomp} | Chemo: ${info.microbe.chemo}%<br>
+          Pathogenicity: ${info.microbe.pathogen}% | Symbiosis: ${info.microbe.symbiosis}%
+        </div>
+      </div>
     `;
     if (info.creatures.length > 0) {
       html += `<hr style="border-color:#0f3460;margin:8px 0">`;
