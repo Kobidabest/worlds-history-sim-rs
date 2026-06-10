@@ -19,6 +19,8 @@ html,body{width:100%;height:100%;overflow:hidden;background:#1a1a2e;color:#e0e0e
 #event-banner{display:none;padding:6px 12px;background:#3a1020;border-bottom:1px solid #e94560;color:#ffd0d8;font-size:12px;flex-shrink:0;z-index:9}
 #event-banner.show{display:block;animation:flash 0.6s ease}
 @keyframes flash{from{background:#e94560;color:#fff}to{background:#3a1020;color:#ffd0d8}}
+#tool-hint{position:absolute;left:10px;bottom:10px;z-index:8;background:rgba(20,30,50,0.85);border:1px solid #0f3460;color:#e0e0e0;padding:6px 10px;border-radius:6px;font-size:12px;pointer-events:none;opacity:0;transition:opacity .25s}
+#tool-hint.show{opacity:1}
 #main-area{flex:1;display:flex;position:relative;overflow:hidden}
 #canvas-wrap{flex:1;position:relative;overflow:hidden}
 canvas{display:block;image-rendering:pixelated}
@@ -119,6 +121,18 @@ canvas{display:block;image-rendering:pixelated}
     <div class="sep"></div>
     <button id="btn-creatures" class="active" aria-label="Toggle creature rendering">Creatures</button>
     <div class="sep"></div>
+    <label data-compact-hide>Tool</label>
+    <select id="tool-select" aria-label="Interaction tool">
+      <option value="inspect">Inspect tile</option>
+      <option value="spawn_herb">Spawn herbivores</option>
+      <option value="spawn_carn">Spawn carnivores</option>
+      <option value="spawn_aqua">Spawn marine life</option>
+      <option value="plant_boost">Boost plants</option>
+      <option value="fertilize">Fertilize soil</option>
+      <option value="cull">Cull animals</option>
+      <option value="strike">Asteroid strike</option>
+    </select>
+    <div class="sep"></div>
     <label data-compact-hide>Planet</label>
     <select id="planet-select" aria-label="Planet preset"></select>
     <div class="sep"></div>
@@ -134,6 +148,7 @@ canvas{display:block;image-rendering:pixelated}
   <div id="main-area">
     <div id="canvas-wrap">
       <canvas id="world-canvas"></canvas>
+      <div id="tool-hint"></div>
     </div>
     <div id="sidebar-backdrop"></div>
     <button id="sidebar-toggle" aria-label="Toggle sidebar">&lsaquo;</button>
@@ -166,20 +181,21 @@ canvas{display:block;image-rendering:pixelated}
 // CONFIGURATION
 // ============================================================
 const CFG = {
-  W: 160, H: 80,
-  NUM_CONTINENTS: 12,
-  CONT_MIN_SIZE: 5.7, CONT_MAX_SIZE: 8.7,
+  W: 280, H: 140,
+  NUM_CONTINENTS: 18,
+  CONT_MIN_SIZE: 7.5, CONT_MAX_SIZE: 12.0,
   TEMP_ALT_FACTOR: 2.05,
   RAIN_DRY_FACTOR: 0.005,
-  INIT_HERB_SPECIES: 5,
-  INIT_CARN_SPECIES: 2,
-  CREATURES_PER_SPECIES: 40,
-  MAX_CREATURES: 6000,
+  INIT_HERB_SPECIES: 8,
+  INIT_CARN_SPECIES: 4,
+  INIT_AQUATIC_SPECIES: 4,    // marine founders (skipped on dry worlds)
+  CREATURES_PER_SPECIES: 55,
+  MAX_CREATURES: 18000,
   SPECIATION_THRESHOLD: 0.32,
   SPECIATION_INTERVAL: 50,
   SNAPSHOT_INTERVAL: 10,
   MAX_SNAPSHOTS: 500,
-  NUM_GENES: 30,          // animal genome length
+  NUM_GENES: 31,          // animal genome length (+ aquatic body plan)
   PLANT_GENES: 9,         // plant-community genome length
   MICROBE_GENES: 5,       // microbe-community genome length
   MUTATION_RATE: 0.08,
@@ -216,7 +232,8 @@ const G = {
   THERMOREG:26,   // 0 = ectotherm (cheap, cold-sluggish), 1 = endotherm (warm-blooded, costly)
   INTELLIGENCE:27,// better foraging & predator evasion, costly brain
   DIGESTION:28,   // gut efficiency: more energy from food, but diet-specialised
-  GROWTH_RATE:29  // juvenile growth speed (size attained), trades against longevity
+  GROWTH_RATE:29, // juvenile growth speed (size attained), trades against longevity
+  AQUATIC:30      // body plan: 0 = terrestrial, ~0.5 = amphibious, 1 = fully aquatic
 };
 
 const GENE_NAMES = [
@@ -227,7 +244,8 @@ const GENE_NAMES = [
   "Radiation Tolerance","Toxic Tolerance","Pressure Tolerance","Photosynthesis",
   "Maturity Age","Armor","Venom","Pack Instinct",
   "Immunity","Display","Scavenging","Metabolism",
-  "Thermoregulation","Intelligence","Digestion","Growth Rate"
+  "Thermoregulation","Intelligence","Digestion","Growth Rate",
+  "Aquatic"
 ];
 
 // ---- PLANT gene indices (kingdom: Plantae — per-tile community) ----
@@ -386,9 +404,12 @@ class RNG {
 // whether it is aquatic (animals can't colonise open liquid), and whether
 // it supports chemosynthesis (microbe-driven primary production with no
 // sunlight, as at deep-sea / geothermal vents).
+// Marine biomes carry phytoplankton & algae (maxBio>0), so aquatic herbivores
+// can graze. Extremophile biomes (ice caps, lava) host sparse extremophile
+// communities rather than being utterly empty.
 const BIOMES = {
-  OCEAN:        {id:0,  name:"Ocean",          color:[30,60,120],   growth:0,    maxBio:0,   aquatic:true,  chemo:false},
-  ICE_CAP:      {id:1,  name:"Ice Cap",        color:[220,230,245], growth:0,    maxBio:0,   aquatic:false, chemo:false, barren:true},
+  OCEAN:        {id:0,  name:"Ocean",          color:[30,60,120],   growth:0.55, maxBio:32,  aquatic:true,  chemo:false},
+  ICE_CAP:      {id:1,  name:"Ice Cap",        color:[220,230,245], growth:0.02, maxBio:3,   aquatic:false, chemo:false},
   TUNDRA:       {id:2,  name:"Tundra",         color:[160,175,165], growth:0.10, maxBio:15,  aquatic:false, chemo:false},
   DESERT:       {id:3,  name:"Desert",         color:[210,190,140], growth:0.05, maxBio:6,   aquatic:false, chemo:false},
   GRASSLAND:    {id:4,  name:"Grassland",      color:[120,170,80],  growth:0.60, maxBio:60,  aquatic:false, chemo:false},
@@ -396,26 +417,39 @@ const BIOMES = {
   FOREST:       {id:6,  name:"Forest",         color:[40,120,50],   growth:0.85, maxBio:100, aquatic:false, chemo:false},
   RAINFOREST:   {id:7,  name:"Rainforest",     color:[20,90,35],    growth:1.00, maxBio:120, aquatic:false, chemo:false},
   // --- alien / extreme biomes ---
-  AMMONIA_SEA:  {id:8,  name:"Ammonia Sea",    color:[82,110,122],  growth:0,    maxBio:0,   aquatic:true,  chemo:false},
-  METHANE_LAKE: {id:9,  name:"Methane Lake",   color:[60,42,30],    growth:0,    maxBio:0,   aquatic:true,  chemo:false},
-  SULFURIC_SEA: {id:10, name:"Sulfuric Sea",   color:[168,142,90],  growth:0,    maxBio:0,   aquatic:true,  chemo:false},
-  LAVA_FIELD:   {id:11, name:"Lava Field",     color:[150,55,30],   growth:0,    maxBio:0,   aquatic:false, chemo:false, barren:true},
-  CRYO_PLAIN:   {id:12, name:"Cryo Plain",     color:[180,200,220], growth:0.04, maxBio:8,   aquatic:false, chemo:false},
+  AMMONIA_SEA:  {id:8,  name:"Ammonia Sea",    color:[82,110,122],  growth:0.30, maxBio:18,  aquatic:true,  chemo:false},
+  METHANE_LAKE: {id:9,  name:"Methane Lake",   color:[60,42,30],    growth:0.25, maxBio:14,  aquatic:true,  chemo:true},
+  SULFURIC_SEA: {id:10, name:"Sulfuric Sea",   color:[168,142,90],  growth:0.18, maxBio:9,   aquatic:true,  chemo:true},
+  LAVA_FIELD:   {id:11, name:"Lava Field",     color:[150,55,30],   growth:0.05, maxBio:3,   aquatic:false, chemo:true},
+  CRYO_PLAIN:   {id:12, name:"Cryo Plain",     color:[180,200,220], growth:0.06, maxBio:10,  aquatic:false, chemo:false},
   CRYSTAL_FOREST:{id:13,name:"Crystal Forest", color:[168,130,210], growth:0.40, maxBio:55,  aquatic:false, chemo:false},
   FUNGAL_MAT:   {id:14, name:"Fungal Mat",     color:[120,70,140],  growth:0.70, maxBio:85,  aquatic:false, chemo:true},
-  GEO_VENT:     {id:15, name:"Geothermal Vent",color:[110,60,40],   growth:0.35, maxBio:50,  aquatic:false, chemo:true},
-  SILICA_DESERT:{id:16, name:"Silica Desert",  color:[220,200,230], growth:0.02, maxBio:4,   aquatic:false, chemo:false},
-  HAZE_HIGHLAND:{id:17, name:"Haze Highland",  color:[180,160,120], growth:0.18, maxBio:24,  aquatic:false, chemo:false}
+  GEO_VENT:     {id:15, name:"Geothermal Vent",color:[110,60,40],   growth:0.50, maxBio:60,  aquatic:false, chemo:true},
+  SILICA_DESERT:{id:16, name:"Silica Desert",  color:[220,200,230], growth:0.04, maxBio:5,   aquatic:false, chemo:false},
+  HAZE_HIGHLAND:{id:17, name:"Haze Highland",  color:[180,160,120], growth:0.22, maxBio:28,  aquatic:false, chemo:false},
+  // Shallow tropical sea: high productivity coastal/reef tile.
+  REEF:         {id:18, name:"Coastal Reef",   color:[60,150,180],  growth:0.85, maxBio:55,  aquatic:true,  chemo:false},
+  // Abyssal/dry-frozen biomes: barren ocean equivalent for dry worlds.
+  ABYSSAL:      {id:19, name:"Abyssal Plain",  color:[15,30,55],    growth:0.12, maxBio:8,   aquatic:true,  chemo:true}
 };
 const BIOME_LIST = Object.values(BIOMES);
 
-// Pick the open-liquid biome that matches the planet's solvent.
-function oceanBiomeFor(planet) {
+// Pick the open-liquid biome that matches the planet's solvent. Water worlds
+// get shallow coastal-reef tiles in the warm photic zone and deep ocean
+// elsewhere — so even an Ocean World has multiple aquatic biomes.
+function oceanBiomeFor(planet, alt, temp) {
   const s = planet && planet.solvent ? planet.solvent : "Liquid water";
   if (s.indexOf("ammonia") >= 0) return BIOMES.AMMONIA_SEA;
   if (s.indexOf("methane") >= 0) return BIOMES.METHANE_LAKE;
   if (s.indexOf("ulfuric") >= 0) return BIOMES.SULFURIC_SEA;
   if (s.indexOf("Dry") >= 0 || s.indexOf("frozen") >= 0) return BIOMES.SILICA_DESERT;
+  // Water world: shallow + warm = productive reefs; very deep = abyssal.
+  if (alt !== undefined) {
+    const mean = (planet && planet.meanTemp !== undefined) ? planet.meanTemp : 0;
+    const warm = (temp === undefined) ? true : (temp - mean > -8);
+    if (alt > -3500 && warm) return BIOMES.REEF;
+    if (alt < -9000) return BIOMES.ABYSSAL;
+  }
   return BIOMES.OCEAN;
 }
 
@@ -423,48 +457,65 @@ function oceanBiomeFor(planet) {
 // biomes depend on the planet's atmosphere chemistry and the local climate,
 // expressed relative to the planet's own mean temperature.
 function classifyBiome(alt, rain, temp, planet) {
-  if (alt < 0) return oceanBiomeFor(planet);
+  if (alt < 0) return oceanBiomeFor(planet, alt, temp);
 
   const mean = (planet && planet.meanTemp !== undefined) ? planet.meanTemp : 0;
   const atm = (planet && planet.atmosphere) ? planet.atmosphere : "O2 / N2";
-  const oxygen = atm.indexOf("O2") >= 0;
+  const oxygen   = atm.indexOf("O2") >= 0;
   const reducing = (atm.indexOf("Methane") >= 0 || atm.indexOf("Ammonia") >= 0);
   const sulfuric = atm.indexOf("Sulfuric") >= 0;
   const rel = temp - mean;
+  // Altitude band 0..1; ridges get a colder treatment regardless of latitude.
+  const altBand = Math.min(1, Math.max(0, alt / 6000));
+  const isMountain = alt > 4500;
+
+  // Geothermal vents pepper volcanic mountain belts on hot/CO2 worlds.
+  if (isMountain && (sulfuric || !oxygen) && rel > -4) return BIOMES.GEO_VENT;
 
   // Extreme heat scorches land into lava/silica regardless of chemistry.
-  if (temp > 45 && rel > 8) return BIOMES.LAVA_FIELD;
-  // Deep cold.
-  if (rel < -14) return oxygen ? BIOMES.ICE_CAP : BIOMES.CRYO_PLAIN;
+  if (temp > 55 && rel > 10) return BIOMES.LAVA_FIELD;
+
+  // Mountain peaks: cold caps on every world.
+  if (isMountain && altBand > 0.8) return oxygen ? BIOMES.ICE_CAP : BIOMES.CRYO_PLAIN;
 
   if (sulfuric) {
-    // Acid world: sparse crystalline/haze cover.
-    if (rain < 300) return BIOMES.SILICA_DESERT;
-    return BIOMES.HAZE_HIGHLAND;
+    // Venusian palette: lava ridges, silica plains, crystal scrub, sulfuric haze.
+    if (rel > 8 && rain < 200) return BIOMES.LAVA_FIELD;
+    if (rain < 250) return BIOMES.SILICA_DESERT;
+    if (rain < 900) return BIOMES.CRYSTAL_FOREST;
+    if (rain < 1800) return BIOMES.HAZE_HIGHLAND;
+    return BIOMES.FUNGAL_MAT;
   }
   if (reducing) {
-    // Reducing atmospheres host fungal/chemotrophic mats where it's wet,
-    // crystal scrub where it's dry.
-    if (rain > 900) return BIOMES.FUNGAL_MAT;
-    if (rel < -2) return BIOMES.CRYO_PLAIN;
-    return (rain < 300) ? BIOMES.SILICA_DESERT : BIOMES.CRYSTAL_FOREST;
+    // Titan-style palette: cryo plains, methane-fed crystal forests,
+    // fungal mats where it's wet, geothermal vents along volcanic ridges.
+    if (rel < -4 && rain < 350) return BIOMES.CRYO_PLAIN;
+    if (rel < -4) return BIOMES.FUNGAL_MAT;
+    if (rain < 200) return BIOMES.SILICA_DESERT;
+    if (rain < 900) return BIOMES.CRYSTAL_FOREST;
+    return BIOMES.FUNGAL_MAT;
   }
   if (!oxygen) {
-    // Thick CO2 / trace: tougher analogues of the temperate biomes.
+    // Thick CO2 / trace: tough analogues of the temperate set.
+    if (rel < -8) return BIOMES.CRYO_PLAIN;
     if (rel < -2) return BIOMES.HAZE_HIGHLAND;
-    if (rain < 300) return BIOMES.SILICA_DESERT;
-    if (rain < 1400) return BIOMES.CRYSTAL_FOREST;
+    if (rain < 250) return BIOMES.SILICA_DESERT;
+    if (rain < 900) return BIOMES.CRYSTAL_FOREST;
+    if (rain < 1600) return BIOMES.HAZE_HIGHLAND;
     return BIOMES.FUNGAL_MAT;
   }
 
-  // Oxygen world — familiar Earthlike biomes.
-  if (rel < -2) {
-    if (rain < 725) return BIOMES.TUNDRA;
+  // Oxygen world — full Earthlike palette: ice → tundra → taiga →
+  // desert → grassland → forest → rainforest, with mountains taking the
+  // cold treatments regardless of latitude.
+  if (rel < -14) return BIOMES.ICE_CAP;
+  if (rel < -4) {
+    if (rain < 500) return BIOMES.TUNDRA;
     return BIOMES.TAIGA;
   }
   if (rain < 275) return BIOMES.DESERT;
-  if (rain < 1375) return BIOMES.GRASSLAND;
-  if (rain < 1775) return BIOMES.FOREST;
+  if (rain < 1100) return BIOMES.GRASSLAND;
+  if (rain < 1900) return BIOMES.FOREST;
   return BIOMES.RAINFOREST;
 }
 
@@ -576,7 +627,11 @@ class World {
           rain *= 1.15;
         }
 
-        this.rainfall[i] = Math.max(0, Math.min(13000, rain));
+        // Scale rainfall by the planet's ocean fraction — dry worlds with
+        // little surface liquid have a much weaker water cycle, so deserts
+        // actually dominate. Ocean worlds get correspondingly rainier.
+        const rainScale = 0.28 + this.planet.oceanFrac * 1.45;
+        this.rainfall[i] = Math.max(0, Math.min(13000, rain * rainScale));
       }
     }
 
@@ -612,11 +667,29 @@ class World {
     }
   }
 
-  isHabitable(x, y) {
-    // Animals live on solid land that isn't a barren ice cap or lava field;
-    // open liquid and barren extremes exclude them (microbes still live there).
+  /// Land suitable for terrestrial founders (used only at population seed).
+  isLand(x, y) {
     const b = BIOME_LIST[this.biome[this.idx(x, y)]];
-    return !b.aquatic && !b.barren;
+    return !b.aquatic;
+  }
+
+  /// Open-liquid tiles suitable for marine founders.
+  isAquatic(x, y) {
+    return BIOME_LIST[this.biome[this.idx(x, y)]].aquatic;
+  }
+
+  /// Legacy alias kept for any callers that just want "non-trivially-toxic".
+  isHabitable(x, y) {
+    const b = BIOME_LIST[this.biome[this.idx(x, y)]];
+    return !b.aquatic;
+  }
+
+  /// True if a given creature can occupy a tile. Terrestrial creatures can't
+  /// swim, fully-aquatic creatures suffocate on land, amphibious can do both.
+  canCreatureEnter(c, x, y) {
+    const b = BIOME_LIST[this.biome[this.idx(x, y)]];
+    if (b.aquatic) return c.pheno.aquatic > 0.3;
+    return c.pheno.aquatic < 0.7;
   }
 
   getBiome(x, y) { return BIOME_LIST[this.biome[this.idx(x, y)]]; }
@@ -666,7 +739,11 @@ function expressGene(genes) {
     thermoreg:    genes[G.THERMOREG]    !== undefined ? genes[G.THERMOREG]    : 0,
     intelligence: genes[G.INTELLIGENCE] !== undefined ? genes[G.INTELLIGENCE] : 0,
     digestion:    genes[G.DIGESTION]    !== undefined ? genes[G.DIGESTION]    : 0.5,
-    growthRate:   genes[G.GROWTH_RATE]  !== undefined ? genes[G.GROWTH_RATE]  : 0.5
+    growthRate:   genes[G.GROWTH_RATE]  !== undefined ? genes[G.GROWTH_RATE]  : 0.5,
+    // Body plan: 0 = terrestrial (drowns in liquid biomes), 1 = fully aquatic
+    // (suffocates on land). Values in between are amphibious — slow on both
+    // but able to cross the shoreline.
+    aquatic:      genes[G.AQUATIC]      !== undefined ? genes[G.AQUATIC]      : 0
   };
 }
 
@@ -719,6 +796,14 @@ function isHerbivore(p) { return p.diet < 0.4; }
 function isCarnivore(p) { return p.diet > 0.6; }
 // Fast growers reach breeding size sooner (growthRate gene, default 0.5 = neutral).
 function maturityOf(c) { return c.pheno.maturityAge * (1.3 - c.pheno.growthRate * 0.6); }
+// Body-plan classification used by movement & founder placement.
+function isFullyAquatic(p)  { return p.aquatic > 0.7; }
+function isFullyTerrestrial(p) { return p.aquatic < 0.3; }
+function bodyPlanLabel(p) {
+  if (isFullyAquatic(p))  return 'Aquatic';
+  if (isFullyTerrestrial(p)) return 'Terrestrial';
+  return 'Amphibious';
+}
 function isMature(c)    { return c.age >= maturityOf(c); }
 
 function crossover(a, b, rng, mutationScale) {
@@ -1075,66 +1160,72 @@ class Simulation {
   }
 
   initCreatures() {
-    // Find habitable tiles
-    const habitable = [];
+    // Split the world into terrestrial and aquatic habitats so founders are
+    // seeded into a realm their body plan can actually survive in.
+    const land = [], water = [];
     for (let y = 0; y < CFG.H; y++) {
       for (let x = 0; x < CFG.W; x++) {
-        if (this.world.isHabitable(x, y)) habitable.push([x, y]);
-      }
-    }
-    if (habitable.length === 0) return;
-
-    // Create herbivore species
-    for (let s = 0; s < CFG.INIT_HERB_SPECIES; s++) {
-      const base = new Float32Array(CFG.NUM_GENES);
-      for (let g = 0; g < CFG.NUM_GENES; g++) base[g] = this.rng.range(0.2, 0.8);
-      adaptBaseToPlanet(base, this.planet, this.rng);
-      base[G.DIET] = this.rng.range(0.0, 0.30);  // herbivore
-      base[G.AGGRESSION] = this.rng.range(0.0, 0.3);
-
-      const col = SPECIES_COLORS[this.species.length % SPECIES_COLORS.length];
-      const sp = new Species(generateSpeciesName(this.rng), col, base);
-      sp.birthTick = 0;
-      this.species.push(sp);
-      this.speciesMap.set(sp.id, sp);
-
-      for (let c = 0; c < CFG.CREATURES_PER_SPECIES; c++) {
-        const [tx, ty] = habitable[this.rng.int(0, habitable.length)];
-        const genes = randomGenome(this.rng, base, 0.08);
-        genes[G.DIET] = Math.min(0.30, genes[G.DIET]);
-        // Founders are sex-balanced 50/50 by RNG.
-        const cr = new Creature(tx, ty, genes, sp.id, this.rng.chance(0.5) ? 0 : 1);
-        this.creatures.push(cr);
-        sp.population++;
-        sp.totalBorn++;
+        if (this.world.isAquatic(x, y)) water.push([x, y]);
+        else land.push([x, y]);
       }
     }
 
-    // Create carnivore species
-    for (let s = 0; s < CFG.INIT_CARN_SPECIES; s++) {
-      const base = new Float32Array(CFG.NUM_GENES);
-      for (let g = 0; g < CFG.NUM_GENES; g++) base[g] = this.rng.range(0.2, 0.8);
-      adaptBaseToPlanet(base, this.planet, this.rng);
-      base[G.DIET] = this.rng.range(0.70, 1.0); // carnivore
-      base[G.AGGRESSION] = this.rng.range(0.5, 1.0);
-      base[G.SPEED] = this.rng.range(0.4, 0.9);
-
-      const col = SPECIES_COLORS[this.species.length % SPECIES_COLORS.length];
-      const sp = new Species(generateSpeciesName(this.rng), col, base);
-      sp.birthTick = 0;
-      this.species.push(sp);
-      this.speciesMap.set(sp.id, sp);
-
-      for (let c = 0; c < CFG.CREATURES_PER_SPECIES; c++) {
-        const [tx, ty] = habitable[this.rng.int(0, habitable.length)];
-        const genes = randomGenome(this.rng, base, 0.08);
-        genes[G.DIET] = Math.max(0.70, genes[G.DIET]);
-        // Founders are sex-balanced 50/50 by RNG.
-        const cr = new Creature(tx, ty, genes, sp.id, this.rng.chance(0.5) ? 0 : 1);
-        this.creatures.push(cr);
-        sp.population++;
-        sp.totalBorn++;
+    // Helper: seed a founding species onto a list of starting tiles.
+    const seed = (count, tiles, baseSet, dietSet) => {
+      for (let s = 0; s < count; s++) {
+        if (!tiles.length) break;
+        const base = new Float32Array(CFG.NUM_GENES);
+        for (let g = 0; g < CFG.NUM_GENES; g++) base[g] = this.rng.range(0.2, 0.8);
+        adaptBaseToPlanet(base, this.planet, this.rng);
+        baseSet(base);
+        const col = SPECIES_COLORS[this.species.length % SPECIES_COLORS.length];
+        const sp = new Species(generateSpeciesName(this.rng), col, base);
+        sp.birthTick = 0;
+        this.species.push(sp);
+        this.speciesMap.set(sp.id, sp);
+        for (let c = 0; c < CFG.CREATURES_PER_SPECIES; c++) {
+          const [tx, ty] = tiles[this.rng.int(0, tiles.length)];
+          const genes = randomGenome(this.rng, base, 0.08);
+          dietSet(genes);
+          const cr = new Creature(tx, ty, genes, sp.id, this.rng.chance(0.5) ? 0 : 1);
+          this.creatures.push(cr);
+          sp.population++;
+          sp.totalBorn++;
+        }
       }
+    };
+
+    if (land.length > 0) {
+      // Terrestrial herbivores.
+      seed(CFG.INIT_HERB_SPECIES, land,
+        b => { b[G.AQUATIC] = this.rng.range(0.0, 0.18); b[G.DIET] = this.rng.range(0.0, 0.30); b[G.AGGRESSION] = this.rng.range(0.0, 0.3); },
+        g => { g[G.DIET] = Math.min(0.30, g[G.DIET]); g[G.AQUATIC] = Math.min(0.18, g[G.AQUATIC]); });
+      // Terrestrial carnivores.
+      seed(CFG.INIT_CARN_SPECIES, land,
+        b => { b[G.AQUATIC] = this.rng.range(0.0, 0.18); b[G.DIET] = this.rng.range(0.70, 1.0); b[G.AGGRESSION] = this.rng.range(0.5, 1.0); b[G.SPEED] = this.rng.range(0.4, 0.9); },
+        g => { g[G.DIET] = Math.max(0.70, g[G.DIET]); g[G.AQUATIC] = Math.min(0.18, g[G.AQUATIC]); });
+    }
+    // Marine founders only if the world actually has aquatic biomes.
+    if (water.length > 50) {
+      // Aquatic herbivores (filter-feeders / grazers on phytoplankton).
+      seed(CFG.INIT_AQUATIC_SPECIES, water,
+        b => {
+          b[G.AQUATIC] = this.rng.range(0.85, 1.0);
+          b[G.DIET] = this.rng.range(0.0, 0.45);
+          b[G.PRESS_TOL] = this.rng.range(0.5, 0.9);
+          b[G.SPEED] = this.rng.range(0.4, 0.85);
+        },
+        g => { g[G.AQUATIC] = Math.max(0.85, g[G.AQUATIC]); });
+      // Aquatic predators.
+      seed(Math.max(1, CFG.INIT_AQUATIC_SPECIES >> 1), water,
+        b => {
+          b[G.AQUATIC] = this.rng.range(0.85, 1.0);
+          b[G.DIET] = this.rng.range(0.65, 1.0);
+          b[G.AGGRESSION] = this.rng.range(0.45, 0.95);
+          b[G.SPEED] = this.rng.range(0.5, 0.95);
+          b[G.PRESS_TOL] = this.rng.range(0.5, 0.9);
+        },
+        g => { g[G.DIET] = Math.max(0.65, g[G.DIET]); g[G.AQUATIC] = Math.max(0.85, g[G.AQUATIC]); });
     }
   }
 
@@ -1479,10 +1570,15 @@ class Simulation {
         const newX = (c.x + mx + CFG.W) % CFG.W;
         const newY = Math.max(0, Math.min(CFG.H - 1, c.y + my));
 
-        // Check if target tile is habitable
-        if (this.world.isHabitable(newX, newY)) {
+        // Body-plan check: terrestrial creatures can't swim and aquatic
+        // creatures suffocate on land. Trying to cross hostile ground costs
+        // health — strong selection pressure to evolve amphibious lineages
+        // before colonising a new realm.
+        if (this.world.canCreatureEnter(c, newX, newY)) {
           c.x = newX;
           c.y = newY;
+        } else {
+          c.health -= 0.04;
         }
 
         // Movement energy cost — heavier, faster bodies pay more, and
@@ -1855,7 +1951,7 @@ class Simulation {
           if (other === c || !other.alive || other.speciesId !== sp.id) continue;
           const dx = Math.abs(other.x - c.x);
           const dy = Math.abs(other.y - c.y);
-          if (dx < 10 && dy < 10) {
+          if (dx < 18 && dy < 18) {
             const d2 = geneticDistance(other.genes, c.genes);
             if (d2 < CFG.SPECIATION_THRESHOLD * 0.7) {
               sp.population--;
@@ -1950,6 +2046,150 @@ class Simulation {
       events: this.events,
       stats: this.stats
     };
+  }
+
+  // ============================================================
+  // INTERACTIVITY — sandbox tools that edit the world directly.
+  // ============================================================
+
+  /// Spawn a single founder creature at (x, y) with a given body plan and
+  /// diet. Used by the spawn-tools and the catastrophe rebound code.
+  spawnFounder(x, y, opts) {
+    const base = new Float32Array(CFG.NUM_GENES);
+    for (let g = 0; g < CFG.NUM_GENES; g++) base[g] = this.rng.range(0.2, 0.8);
+    adaptBaseToPlanet(base, this.planet, this.rng);
+    if (opts.diet !== undefined) base[G.DIET] = opts.diet;
+    if (opts.aggression !== undefined) base[G.AGGRESSION] = opts.aggression;
+    if (opts.aquatic !== undefined) base[G.AQUATIC] = opts.aquatic;
+    if (opts.speed !== undefined) base[G.SPEED] = opts.speed;
+
+    // Re-use the most-recent same-diet species if one already exists at this
+    // tile, otherwise mint a fresh one (so users can build an ecosystem
+    // without flooding the species roster).
+    let sp = null;
+    for (const existing of this.species) {
+      if (existing.extinct) continue;
+      if (Math.abs(existing.genome[G.DIET] - base[G.DIET]) < 0.1
+          && Math.abs(existing.genome[G.AQUATIC] - base[G.AQUATIC]) < 0.2) {
+        sp = existing;
+        break;
+      }
+    }
+    if (!sp) {
+      const col = SPECIES_COLORS[this.species.length % SPECIES_COLORS.length];
+      sp = new Species(generateSpeciesName(this.rng), col, base);
+      sp.birthTick = this.tick;
+      this.species.push(sp);
+      this.speciesMap.set(sp.id, sp);
+    }
+
+    const count = opts.count || 6;
+    let made = 0;
+    for (let i = 0; i < count; i++) {
+      const tx = (x + this.rng.int(-1, 2) + CFG.W) % CFG.W;
+      const ty = Math.max(0, Math.min(CFG.H - 1, y + this.rng.int(-1, 2)));
+      // Respect body-plan compatibility with the chosen tile.
+      const aquaticTile = this.world.isAquatic(tx, ty);
+      const wantAquatic = opts.aquatic !== undefined ? opts.aquatic > 0.5 : false;
+      if (aquaticTile !== wantAquatic) continue;
+      const genes = randomGenome(this.rng, base, 0.06);
+      if (opts.diet !== undefined) genes[G.DIET] = opts.diet;
+      if (opts.aquatic !== undefined) genes[G.AQUATIC] = opts.aquatic;
+      const cr = new Creature(tx, ty, genes, sp.id, this.rng.chance(0.5) ? 0 : 1);
+      cr.energy = cr.pheno.fertility * 1.0; // give founders a healthy starting energy
+      this.creatures.push(cr);
+      sp.population++;
+      sp.totalBorn++;
+      made++;
+    }
+    return made;
+  }
+
+  /// Apply an interactive tool at a tile and return a short status message.
+  applyTool(tool, x, y) {
+    const i = y * CFG.W + x;
+    const eco = this.ecosystem[i];
+    switch (tool) {
+      case 'spawn_herb': {
+        if (this.world.isAquatic(x, y)) return 'Herbivores need land — try Marine life on water tiles.';
+        const n = this.spawnFounder(x, y, { diet: 0.15, aggression: 0.2, aquatic: 0.1, count: 6 });
+        return n > 0 ? `Spawned ${n} herbivores at (${x},${y}).` : 'No room nearby.';
+      }
+      case 'spawn_carn': {
+        if (this.world.isAquatic(x, y)) return 'Land carnivores need land — try Marine life on water tiles.';
+        const n = this.spawnFounder(x, y, { diet: 0.85, aggression: 0.7, speed: 0.7, aquatic: 0.1, count: 4 });
+        return n > 0 ? `Spawned ${n} carnivores at (${x},${y}).` : 'No room nearby.';
+      }
+      case 'spawn_aqua': {
+        if (!this.world.isAquatic(x, y)) return 'Marine life needs an aquatic tile.';
+        const herbN = this.spawnFounder(x, y, { diet: 0.2, aquatic: 0.95, speed: 0.5, count: 4 });
+        const carnN = this.spawnFounder(x, y, { diet: 0.8, aggression: 0.6, aquatic: 0.95, speed: 0.7, count: 2 });
+        return `Seeded ${herbN} grazers and ${carnN} predators in the water.`;
+      }
+      case 'plant_boost': {
+        if (!eco) return '';
+        const cap = eco.baseCap * eco.plantPheno.capacity;
+        if (cap < 0.5) return 'Nothing will grow here.';
+        eco.plantBiomass = Math.min(cap, eco.plantBiomass + cap * 0.5 + 10);
+        // Boost surrounding tiles a bit too — a small floral bloom.
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          const nx = (x + dx + CFG.W) % CFG.W, ny = y + dy;
+          if (ny < 0 || ny >= CFG.H) continue;
+          const e = this.ecosystem[ny * CFG.W + nx];
+          const c2 = e.baseCap * e.plantPheno.capacity;
+          if (c2 > 0.5) e.plantBiomass = Math.min(c2, e.plantBiomass + c2 * 0.2 + 4);
+        }
+        return 'Plant biomass boosted in a small area.';
+      }
+      case 'fertilize': {
+        if (!eco) return '';
+        eco.nutrients += 20;
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          const nx = (x + dx + CFG.W) % CFG.W, ny = y + dy;
+          if (ny < 0 || ny >= CFG.H) continue;
+          this.ecosystem[ny * CFG.W + nx].nutrients += 8;
+        }
+        return 'Soil enriched — plants will grow faster here.';
+      }
+      case 'cull': {
+        let killed = 0;
+        const r = 3;
+        for (const c of this.creatures) {
+          if (!c.alive) continue;
+          const dx = Math.min(Math.abs(c.x - x), CFG.W - Math.abs(c.x - x));
+          if (dx * dx + (c.y - y) * (c.y - y) < r * r) {
+            c.alive = false; c.deathCause = 'culled'; killed++;
+          }
+        }
+        return killed ? `Culled ${killed} animals.` : 'No animals in range.';
+      }
+      case 'strike': {
+        // Player-triggered asteroid: localised devastation, no climate shock.
+        const r = 8 + this.rng.int(0, 5);
+        let killed = 0;
+        for (const c of this.creatures) {
+          const dx = Math.min(Math.abs(c.x - x), CFG.W - Math.abs(c.x - x));
+          const dy = Math.abs(c.y - y);
+          if (dx * dx + dy * dy < r * r && this.rng.chance(0.9)) {
+            c.alive = false; c.deathCause = 'impact'; killed++;
+          }
+        }
+        // Scorch the ground at the crater.
+        for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+          if (dx * dx + dy * dy >= r * r) continue;
+          const nx = (x + dx + CFG.W) % CFG.W, ny = y + dy;
+          if (ny < 0 || ny >= CFG.H) continue;
+          const e = this.ecosystem[ny * CFG.W + nx];
+          e.plantBiomass *= 0.1;
+          e.carrion += 4;
+          e.nutrients += 6;
+        }
+        this.events.unshift({ tick: this.tick, name: 'strike', desc: `Player-summoned asteroid hit (${x},${y}); ${killed} dead.` });
+        if (this.events.length > 12) this.events.pop();
+        return `Asteroid impact: ${killed} animals killed in a crater.`;
+      }
+    }
+    return '';
   }
 }
 
@@ -2377,6 +2617,21 @@ class App {
 
     // Switching planet without changing seed also regenerates the world —
     // otherwise the selector looks like it does nothing until you hit "New".
+    document.getElementById('tool-select').addEventListener('change', (e) => {
+      // Brief hint so the user knows the tap action has changed.
+      const map = {
+        inspect:'Tap a tile to inspect it.',
+        spawn_herb:'Tap land to spawn herbivores.',
+        spawn_carn:'Tap land to spawn carnivores.',
+        spawn_aqua:'Tap water to seed marine life.',
+        plant_boost:'Tap to boost plant biomass nearby.',
+        fertilize:'Tap to enrich the soil with nutrients.',
+        cull:'Tap to cull animals in a small radius.',
+        strike:'Tap to drop a localised asteroid strike.'
+      };
+      this.flashTool(map[e.target.value] || '');
+    });
+
     document.getElementById('planet-select').addEventListener('change', () => {
       const seed = Date.now() ^ (Math.random() * 0xffffffff);
       nextSpeciesId = 0;
@@ -2419,24 +2674,30 @@ class App {
       });
     });
 
-    // Canvas tap for tile info — handled separately for mouse vs touch so
-    // that scrolls/drags don't fire taps on mobile.
+    // Canvas tap — dispatched to whichever tool the user has selected. The
+    // default is "Inspect", which opens the tile info panel; the other tools
+    // (spawn life, boost plants, drop an asteroid, ...) directly edit the
+    // world at the tapped tile, turning the simulator into a sandbox.
     const canvas = document.getElementById('world-canvas');
     const handleTap = (clientX, clientY) => {
       const rect = canvas.getBoundingClientRect();
       const x = clientX - rect.left;
       const y = clientY - rect.top;
       const tile = this.renderer.screenToTile(x, y);
-      if (tile) {
+      if (!tile) return;
+      const toolSel = document.getElementById('tool-select');
+      const tool = toolSel ? toolSel.value : 'inspect';
+      if (tool === 'inspect') {
         this.sim.selectedTile = tile;
         this.updateTileInfo(tile[0], tile[1]);
-        // Switch to tile tab
         document.querySelectorAll('#tab-bar button').forEach(b => b.classList.remove('active'));
         document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
         document.querySelector('[data-tab="tile-tab"]').classList.add('active');
         document.getElementById('tile-tab').classList.add('active');
-        // Auto-open the sidebar on mobile so the tap actually leads somewhere.
         if (isMobile() && this.sidebarCollapsed) setSidebar(false);
+      } else {
+        const msg = this.sim.applyTool(tool, tile[0], tile[1]);
+        this.flashTool(msg);
       }
     };
     // ---- Mouse path ---------------------------------------------------
@@ -2636,7 +2897,7 @@ class App {
         html += `<div class="species-card" style="border-left:3px solid ${spCol}">
           <div class="name" style="color:${spCol}">${sexSymbol(c.sex)} ${spName}${healthTag}</div>
           <div class="stats">
-            ${dietLabel(c.pheno.diet)} ${stage} | Size: ${c.pheno.bodySize.toFixed(1)} | Age: ${c.age}/${Math.round(c.pheno.maxAge)}<br>
+            ${bodyPlanLabel(c.pheno)} ${dietLabel(c.pheno.diet)} ${stage} | Size: ${c.pheno.bodySize.toFixed(1)} | Age: ${c.age}/${Math.round(c.pheno.maxAge)}<br>
             Energy: ${c.energy.toFixed(1)} | Health: ${(c.health * 100).toFixed(0)}% | ${stateName[c.state || 0]}
             ${def.length ? '<br>' + def.join(' &middot; ') : ''}
           </div>
@@ -2771,6 +3032,17 @@ class App {
   }
 
   /// Flash a banner when a fresh catastrophe occurs, then fade it.
+  /// Show a transient hint after the user applies an interactive tool.
+  flashTool(msg) {
+    if (!msg) return;
+    const el = document.getElementById('tool-hint');
+    if (!el) return;
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(this._toolHintTimer);
+    this._toolHintTimer = setTimeout(() => el.classList.remove('show'), 1800);
+  }
+
   updateEventBanner(ws) {
     const el = document.getElementById('event-banner');
     if (!el) return;
